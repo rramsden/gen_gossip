@@ -1,9 +1,0 @@
-{application,egossip,
-             [{description,[]},
-              {vsn,"1"},
-              {registered,[]},
-              {applications,[kernel,stdlib]},
-              {mod,{egossip_app,[]}},
-              {env,[]},
-              {modules,[egossip,egossip_app,egossip_handler,egossip_server,
-                        egossip_sup]}]}.
