@@ -30,13 +30,14 @@
 -define(DEBUG_MSG(Str, Args), ?DEBUG andalso io:format("[~s] :: ~s", [?TIMESTAMP, lists:flatten(io_lib:format(Str, Args))])).
 
 -define(RECHECK, 5).
+-define(SERVER(Module), list_to_atom("egossip_" ++ atom_to_list(Module))).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
 start_link(Module) ->
-    gen_server:start_link(?MODULE, [Module], []).
+    gen_server:start_link(?SERVER(Module), [Module], []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -176,14 +177,14 @@ reset_gossip(#state{module=Module} = State0) ->
             State0#state{ cgossip={0, Now}, mgossip={Num, Expire} }
     end.
 
-send_gossip(ToNode, Token, Data, #state{nodes=Nodes} = State0) ->
+send_gossip(ToNode, Token, Data, #state{module=Module, nodes=Nodes} = State0) ->
     {CanSend, State1} = can_gossip(State0),
     case CanSend of
         false ->
             {ok, State1};
         true ->
             ?DEBUG_MSG("sending ~p to ~p~n", [Token, ToNode]),
-            gen_server:cast({?MODULE, ToNode}, {Token, Nodes, node(), Data}),
+            gen_server:cast({?SERVER(Module), ToNode}, {Token, Nodes, node(), Data}),
             {ok, State1}
     end.
 
