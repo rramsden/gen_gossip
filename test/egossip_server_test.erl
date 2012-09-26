@@ -1,4 +1,5 @@
--module(egossip_server_test).  -include_lib("eunit/include/eunit.hrl").
+-module(egossip_server_test).
+-include_lib("eunit/include/eunit.hrl").
 
 -record(state, {
     cgossip = {0, {0,0,0}}, % current gossip count
@@ -8,89 +9,119 @@
     module
 }).
 
--define(RECHECK, 5).
+app_test_() ->
+    {foreach,
+     fun setup/0,
+     fun cleanup/1,
+     [
+            fun reconcile_nodes/1,
+            fun never_can_gossip/1,
+            fun never_can_gossip_flips/1,
+            fun normal_can_gossip/1
+            ]}.
 
-reconcile_nodes_test() ->
-    % Handles network partitions and new nodes joining the cluster
+setup() ->
     Module = gossip_test,
     meck:new(Module),
+    meck:expect(Module, gossip_freq, 0, {1,2}),
+    meck:expect(Module, digest, 0, ok),
+    meck:expect(Module, push, 2, ok),
+    meck:expect(Module, symmetric_push, 2, ok),
+    meck:expect(Module, commit, 2, ok),
     meck:expect(Module, join, 1, ok),
+    meck:expect(Module, expire, 2, ok),
+    Module.
 
-    % equally sized clusters must do a tiebreaker by comparing their
-    % node lists to see which island has to join another
-    ?assertEqual([a,c,d], eg_gossip_server:reconcile_nodes([a,b], [c,d], d, Module)),
-    ?assert( meck:called(Module, join, [ [c,d] ]) ),
-
-    % smaller sized islands must join a larger island
-    ?assertEqual([a,b,c,d], eg_gossip_server:reconcile_nodes([a], [b,c,d], d, Module)),
-    ?assert( meck:called(Module, join, [ [b,c,d] ]) ),
-    ?assertEqual([a,b,c,d], eg_gossip_server:reconcile_nodes([a,c,d], [b], b, Module)),
-
-    % node lists are the same, don't do anything
-    ?assertEqual([a,b], eg_gossip_server:reconcile_nodes([a,b], [a,b], b, Module)),
-
-    % Two islands [a,b] and [c,d], a joins c #=> [a,c,d] and b joins d #=> [b,c,d]
-    % an intersection now exists if these two islands talk with eachother.
-    % reconcile_nodes should just perform an union and not trigger a join event.
-    ?assertEqual([a,b,c,d], eg_gossip_server:reconcile_nodes([a,c,d], [b,c,d], c, Module)),
-
+cleanup(Module) ->
     meck:unload(Module).
 
-never_can_gossip_test() ->
-    Module = gossip_test,
+reconcile_nodes(Module) ->
+    fun() ->
+        % equally sized clusters must do a tiebreaker by comparing their
+        % node lists to see which island has to join another
+        ?assertEqual([a,c,d], egossip_server:reconcile_nodes([a,b], [c,d], d, Module)),
+        ?assert( meck:called(Module, join, [ [c,d] ]) ),
 
-    State0 = eg_gossip_server:reset_gossip(#state{module=Module}),
-    {_, State1} = Result1 = eg_gossip_server:can_gossip(State0),
-    {_, State2} = Result2 = eg_gossip_server:can_gossip(State1),
-    {_, State3} = Result3 = eg_gossip_server:can_gossip(State2),
+        % smaller sized islands must join a larger island
+        ?assertEqual([a,b,c,d], egossip_server:reconcile_nodes([a], [b,c,d], d, Module)),
+        ?assert( meck:called(Module, join, [ [b,c,d] ]) ),
 
-    % simulate ?RECHECK seconds passing
-    #state{ cgossip={CM, {Meg, Sec, Mic}} } = State3,
-    {_, State4} = Result4 = eg_gossip_server:can_gossip(State3#state{ cgossip={CM, {Meg, Sec+?RECHECK, Mic}} }),
-    {_, _} = Result5 = eg_gossip_server:can_gossip(State4),
+        % since the remote node is joining our cluster we don't get a join notice.
+        % once we talk to him he will get a join notice on his side
+        ?assertEqual([a,b,c,d], egossip_server:reconcile_nodes([a,c,d], [b], b, Module)),
+        ?assert( not meck:called(Module, join, [ [b] ]) ),
 
-    ?assertMatch({false, _}, Result1),
-    ?assertMatch({false, _}, Result2),
-    ?assertMatch({false, _}, Result3),
-    ?assertMatch({false, _}, Result4),
-    ?assertMatch({false, _}, Result5).
+        % node lists are the same, don't do anything
+        ?assertEqual([a,b], egossip_server:reconcile_nodes([a,b], [a,b], b, Module)),
 
-never_can_gossip_flips_test() ->
-    Module = gossip_test,
+        % Two islands [a,b] and [c,d], a joins c #=> [a,c,d] and b joins d #=> [b,c,d]
+        % an intersection now exists if these two islands talk with eachother.
+        % reconcile_nodes should just perform an union and not trigger a join event.
+        ?assertEqual([a,b,c,d], egossip_server:reconcile_nodes([a,c,d], [b,c,d], c, Module))
+    end.
 
-    State0 = eg_gossip_server:reset_gossip(#state{module=Module}),
-    {_, State1} = Result1 = eg_gossip_server:can_gossip(State0),
-    {_, State2} = Result2 = eg_gossip_server:can_gossip(State1),
-    {_, State3} = Result3 = eg_gossip_server:can_gossip(State2),
+never_can_gossip(Module) ->
+    fun() ->
+        meck:expect(Module, gossip_freq, 0, never),
 
-    % simulate ?RECHECK seconds passing
-    #state{ cgossip={CM, {Meg, Sec, Mic}} } = State3,
-    {_, State4} = Result4 = eg_gossip_server:can_gossip(State3#state{ cgossip={CM, {Meg, Sec+?RECHECK, Mic}} }),
-    {_, State5} = Result5 = eg_gossip_server:can_gossip(State4),
-    {_, _} = Result6 = eg_gossip_server:can_gossip(State5),
+        State0 = egossip_server:reset_gossip(#state{module=Module}),
+        {_, State1} = Result1 = egossip_server:can_gossip(State0),
+        {_, State2} = Result2 = egossip_server:can_gossip(State1),
+        {_, State3} = Result3 = egossip_server:can_gossip(State2),
 
-    ?assertMatch({false, _}, Result1),
-    ?assertMatch({false, _}, Result2),
-    ?assertMatch({false, _}, Result3),
-    ?assertMatch({true, _}, Result4),
-    ?assertMatch({true, _}, Result5),
-    ?assertMatch({false, _}, Result6).
+        Recheck = 5,
+        #state{ cgossip={CM, {Meg, Sec, Mic}} } = State3,
+        {_, State4} = Result4 = egossip_server:can_gossip(State3#state{ cgossip={CM, {Meg, Sec+Recheck, Mic}} }),
+        {_, _} = Result5 = egossip_server:can_gossip(State4),
 
-normal_can_gossip_test() ->
-    Module = gossip_test,
+        ?assertMatch({false, _}, Result1),
+        ?assertMatch({false, _}, Result2),
+        ?assertMatch({false, _}, Result3),
+        ?assertMatch({false, _}, Result4),
+        ?assertMatch({false, _}, Result5)
+    end.
 
-    State0 = eg_gossip_server:reset_gossip(#state{module=Module}),
-    {_, State1} = Result1 = eg_gossip_server:can_gossip(State0),
-    {_, State2} = Result2 = eg_gossip_server:can_gossip(State1),
-    {_, State3} = Result3 = eg_gossip_server:can_gossip(State2),
+never_can_gossip_flips(Module) ->
+    fun() ->
+        meck:expect(Module, gossip_freq, 0, never),
 
-    % simulate 2 seconds passing
-    #state{ cgossip={CM, {Meg, Sec, Mic}} } = State3,
-    {_, State4} = Result4 = eg_gossip_server:can_gossip(State3#state{ cgossip={CM, {Meg, Sec+2, Mic}} }),
-    {_, _} = Result5 = eg_gossip_server:can_gossip(State4),
+        State0 = egossip_server:reset_gossip(#state{module=Module}),
+        {_, State1} = Result1 = egossip_server:can_gossip(State0),
+        {_, State2} = Result2 = egossip_server:can_gossip(State1),
+        {_, State3} = Result3 = egossip_server:can_gossip(State2),
 
-    ?assertMatch({true, _}, Result1),
-    ?assertMatch({false, _}, Result2),
-    ?assertMatch({false, _}, Result3),
-    ?assertMatch({true, _}, Result4),
-    ?assertMatch({false, _}, Result5).
+        meck:expect(Module, gossip_freq, 0, {2,1}),
+
+        Recheck = 5, % simulate Recheck seconds passing
+
+        #state{ cgossip={CM, {Meg, Sec, Mic}} } = State3,
+        {_, State4} = Result4 = egossip_server:can_gossip(State3#state{ cgossip={CM, {Meg, Sec+Recheck, Mic}} }),
+        {_, State5} = Result5 = egossip_server:can_gossip(State4),
+        {_, _} = Result6 = egossip_server:can_gossip(State5),
+
+        ?assertMatch({false, _}, Result1),
+        ?assertMatch({false, _}, Result2),
+        ?assertMatch({false, _}, Result3),
+        ?assertMatch({true, _}, Result4),
+        ?assertMatch({true, _}, Result5),
+        ?assertMatch({false, _}, Result6)
+    end.
+
+normal_can_gossip(Module) ->
+    fun() ->
+        State0 = egossip_server:reset_gossip(#state{module=Module}),
+        {_, State1} = Result1 = egossip_server:can_gossip(State0),
+        {_, State2} = Result2 = egossip_server:can_gossip(State1),
+        {_, State3} = Result3 = egossip_server:can_gossip(State2),
+
+        % simulate 2 seconds passing
+        #state{ cgossip={CM, {Meg, Sec, Mic}} } = State3,
+        {_, State4} = Result4 = egossip_server:can_gossip(State3#state{ cgossip={CM, {Meg, Sec+2, Mic}} }),
+        {_, _} = Result5 = egossip_server:can_gossip(State4),
+
+        ?assertMatch({true, _}, Result1),
+        ?assertMatch({false, _}, Result2),
+        ?assertMatch({false, _}, Result3),
+        ?assertMatch({true, _}, Result4),
+        ?assertMatch({false, _}, Result5)
+    end.
