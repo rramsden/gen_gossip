@@ -7,4 +7,4 @@
 -spec new(module()) -> {ok, pid()}.
 
 new(Module) ->
-    eg_gossip_sup:start_child(Module).
+    egossip_sup:start_child(Module).

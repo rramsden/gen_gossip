@@ -37,7 +37,7 @@
 %%%===================================================================
 
 start_link(Module) ->
-    gen_server:start_link(?SERVER(Module), [Module], []).
+    gen_server:start_link({local, ?SERVER(Module)}, ?MODULE, [Module], []).
 
 %%%===================================================================
 %%% gen_server callbacks
