@@ -32,6 +32,8 @@
 -define(RECHECK, 5).
 -define(SERVER(Module), list_to_atom("egossip_" ++ atom_to_list(Module))).
 
+-define(TRY(Code), (catch begin Code end)).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -51,11 +53,12 @@ init([Module]) ->
 handle_cast({push, RemoteNodes, From, Msg}, #state{module=Module, nodes=Nodes} = State0) when From =/= node() ->
     ?DEBUG_MSG("push from ~p~n", [From]),
     NewNodes = reconcile_nodes(Nodes, RemoteNodes, From, Module),
+    Exported = erlang:function_exported(Module, symmetric_push, 2),
 
     {ok, State1} = case Module:push(Msg, From) of
-        {ok, Reply} ->
+        {ok, Reply} when Exported == true ->
             send_gossip(From, symmetric_push, Reply, State0);
-        noreply ->
+        _ ->
             {ok, State0}
     end,
     {noreply, State1#state{nodes=NewNodes}};
@@ -63,11 +66,12 @@ handle_cast({push, RemoteNodes, From, Msg}, #state{module=Module, nodes=Nodes} =
 handle_cast({symmetric_push, RemoteNodes, From, Msg}, #state{module=Module, nodes=Nodes} = State0) when From =/= node() ->
     ?DEBUG_MSG("symmetric_push from ~p~n", [From]),
     NewNodes = reconcile_nodes(Nodes, RemoteNodes, From, Module),
+    Exported = erlang:function_exported(Module, commit, 2),
 
     {ok, State1} = case Module:symmetric_push(Msg, From) of
-        {ok, Reply} ->
+        {ok, Reply} when Exported == true ->
             send_gossip(From, commit, Reply, State0);
-        noreply ->
+        _ ->
             {ok, State0}
     end,
     {noreply, State1#state{nodes=NewNodes}};
@@ -80,7 +84,7 @@ handle_cast({commit, RemoteNodes, From, Msg}, #state{module=Module, nodes=Nodes}
 
 handle_info({nodedown, Node}, #state{module=Module} = State) ->
     NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodes),
-    Module:expire(Node, NodesLeft),
+    ?TRY(Module:expire(Node)),
     {noreply, State#state{nodes=NodesLeft}};
 
 handle_info({nodeup, _}, State) ->
@@ -125,15 +129,15 @@ reconcile_nodes(A, B, From, Module) ->
         length(A) > length(B) andalso Intersection == [] ->
             union(A, [From]);
         length(A) < length(B) andalso Intersection == [] ->
-            Module:join(B),
+            ?TRY(Module:join(B)),
             union(B, [node_name()]);
         length(Intersection) == 1 andalso length(B) > length(A) ->
-            Module:join(B -- A),
+            ?TRY(Module:join(B -- A)),
             union(B, [node_name()]);
         length(Intersection) > 0 ->
             union(A, B);
         A < B ->
-            Module:join(B),
+            ?TRY(Module:join(B)),
             union(B, [node_name()]);
         true ->
             union(A, [From])
