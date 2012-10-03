@@ -58,7 +58,7 @@ start_link(Module) ->
 init([Module]) ->
     send_after(Module:gossip_freq(), tick),
     net_kernel:monitor_nodes(true),
-    {ok, gossiping, reset_gossip(#state{module=Module})}.
+    {ok, waiting, reset_gossip(#state{module=Module})}.
 
 waiting({Epoch, _, _}, State0) ->
     {ok, State1} = next_epoch(Epoch + 1, State0),
