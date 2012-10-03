@@ -134,18 +134,19 @@ handle_info({nodeup, _}, StateName, State) ->
 handle_info(tick, StateName, #state{module=Module} = State0) ->
     send_after(Module:gossip_freq(), tick),
 
-    {ok, State1} = case get_peer(visible) of
+    {ok, State1} = next_epoch(State0),
+    {ok, State2} = case get_peer(visible) of
         none_available ->
-            {ok, State0};
+            {ok, State1};
         {ok, Node} ->
            case Module:digest() of
                 {ok, Digest} ->
-                    send_gossip(Node, push, Digest, State0);
+                    send_gossip(Node, push, Digest, State1);
                 noreply ->
-                    {ok, State0}
+                    {ok, State1}
             end
     end,
-    {next_state, StateName, State1}.
+    {next_state, StateName, State2}.
 
 handle_event(_Msg, StateName, State) ->
     {next_state, StateName, State}.
@@ -164,7 +165,21 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-next_epoch(N, State) ->
+next_epoch(#state{module=Module, cycle=Cycle, epoch=Epoch, nodecache=Nodes} = State0) ->
+    NextCycle = Cycle + 1,
+    NodeCount = length(Nodes),
+
+    case NextCycle > Module:max_cycle(NodeCount) of
+        true ->
+            NextEpoch = Epoch + 1,
+            next_epoch(NextEpoch, State0);
+        false ->
+            {ok, State0#state{cycle=NextCycle}}
+    end.
+
+next_epoch(N, #state{module=Module} = State) ->
+    ?DEBUG_MSG("*** entered epoch ~p ***~n", [N]),
+    ?TRY(Module:new_epoch(N)),
     {ok, State#state{epoch=N, cycle=0}}.
 
 reconcile_nodes(A, B, From, Module) ->
