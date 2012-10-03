@@ -1,9 +1,21 @@
--module(egossip_sample).
+%% @doc
+%% Example gen_sever which implements egossip and calculates
+%% a summation across mutliple nodes in a cluster.
+%%
+%% Usage:
+%%
+%%   (a@machine1)> egossip_sum:start_link(25).
+%%   (b@machine1)> egossip_sum:start_link(25).
+%%   (a@machine2)> egossip_sum:calculate_sum().
+%%   (a@machine3)> 50
+%%
+%% @end
+
+-module(egossip_sum).
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
-         set/1]).
+-export([start_link/1, calculate_sum/0]).
 
 %% egossip callbacks
 -export([gossip_freq/0,
@@ -28,11 +40,11 @@
 %%% API
 %%%===================================================================
 
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Number) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Number], []).
 
-set(Number) ->
-    gen_server:call(?MODULE, {set, Number}).
+calculate_sum() ->
+    egossip:aggregate(?MODULE).
 
 %%%===================================================================
 %%% egossip callbacks
@@ -76,17 +88,13 @@ symmetric_push(Msg, _From) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([]) ->
+init([Number]) ->
     egossip_sup:start_child(?MODULE),
-    {ok, #state{}}.
+    {ok, #state{value=Number}}.
 
 handle_call({get, digest}, _From, State) ->
     Reply = {ok, State#state.value},
-    io:format("~p~n", [Reply]),
     {reply, Reply, State};
-
-handle_call({set, Number}, _From, State) ->
-    {reply, ok, State#state{value=Number}};
 
 handle_call({push, Value}, _From, State) ->
     NewValue = (Value + State#state.value) / 2,
