@@ -7,6 +7,7 @@
 
 %% egossip callbacks
 -export([gossip_freq/0,
+         max_cycle/1,
          digest/0,
          push/2,
          symmetric_push/2]).
@@ -37,15 +38,37 @@ set(Number) ->
 %%% egossip callbacks
 %%%===================================================================
 
+% @doc
+% Defines the maximum threshold on messages that can be sent over
+% the network. {1,2} = 1 message every 2 seconds
+% @end
 gossip_freq() ->
     {1, 2}.
 
+% @doc
+% The total number of cycles needed to reach convergence.
+% Best to experiment and figure out how many cycles it takes
+% your algorithm to reach convergence then assign that number
+% @end
+max_cycle(NodeCount) ->
+    round(math:log(NodeCount * 5)) + 1.
+
+% @doc
+% First message sent when talking to another node.
+% @end
 digest() ->
     gen_server:call(?MODULE, {get, digest}).
 
-push(Msg, _From) ->
-    gen_server:call(?MODULE, {push, Msg}).
+% @doc
+% Callback giving you another nodes digest
+% @end
+push(Digest, _From) ->
+    gen_server:call(?MODULE, {push, Digest}).
 
+% @doc
+% Callback triggered on the node that initiated
+% the gossip
+% @end
 symmetric_push(Msg, _From) ->
     gen_server:call(?MODULE, {symmetric_push, Msg}).
 
@@ -59,6 +82,7 @@ init([]) ->
 
 handle_call({get, digest}, _From, State) ->
     Reply = {ok, State#state.value},
+    io:format("~p~n", [Reply]),
     {reply, Reply, State};
 
 handle_call({set, Number}, _From, State) ->
