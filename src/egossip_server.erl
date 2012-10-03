@@ -64,6 +64,7 @@ waiting({Epoch, _, _}, State0) ->
     {ok, State1} = next_epoch(Epoch + 1, State0),
     {next_state, syncing, State1};
 waiting(_, State) ->
+    ?DEBUG_MSG("waiting...~n", []),
     {next_state, syncing, State}.
 
 syncing({Epoch, _, _} = Msg, #state{epoch=Epoch} = State) ->
@@ -78,6 +79,7 @@ syncing({R_Epoch, _, _}, #state{epoch=Epoch} = State0)
     {ok, State1} = next_epoch(R_Epoch + 1, State0),
     {next_state, syncing, State1};
 syncing(_, State) ->
+    ?DEBUG_MSG("syncing...~n", []),
     {next_state, syncing, State}.
 
 gossiping({R_Epoch, _, _} = Msg, #state{epoch=Epoch} = State)
