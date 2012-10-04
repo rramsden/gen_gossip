@@ -134,10 +134,6 @@ handle_info(tick, StateName, #state{module=Module} = State0) ->
 handle_event(_Msg, StateName, State) ->
     {next_state, StateName, State}.
 
-handle_sync_event(aggregate, From, StateName, State) ->
-    Callstack = [From | State#state.callers],
-    {next_state, StateName, State#state{callers=Callstack}};
-
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
