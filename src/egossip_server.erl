@@ -2,7 +2,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([ start_link/1 ]).
+-export([ start_link/1, start_link/2 ]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -23,11 +23,11 @@
     cgossip = {0, {0,0,0}}, % current gossip count
     mgossip = {1, {1,1,1}}, % max gossip count
     nodecache = [node()],
-    expired = [],
 
-    % aggregation
+    % required for aggregation protocol
     epoch = 0,
     cycle = 0,
+    callers = [],
 
     module
 }).
@@ -35,7 +35,6 @@
 % debug
 -define(TIMESTAMP, begin {_, {Hour,Min,Sec}} = erlang:localtime(),
         lists:flatten(io_lib:format("~2..0B:~2..0B:~2..0B", [Hour, Min, Sec])) end).
--define(DEBUG, false).
 -define(DEBUG_MSG(Str, Args), ?DEBUG andalso
         io:format("[~s] :: ~s", [?TIMESTAMP, lists:flatten(io_lib:format(Str, Args))])).
 
@@ -49,22 +48,28 @@
 %%%===================================================================
 
 start_link(Module) ->
-    gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module], []).
+    start_link(Module, []).
+
+start_link(Module, Opts) ->
+    gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module, Opts], []).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Module]) ->
+init([Module, Opts]) ->
     send_after(Module:gossip_freq(), tick),
     net_kernel:monitor_nodes(true),
-    {ok, waiting, reset_gossip(#state{module=Module})}.
+    StateName = case lists:member(sync, Opts) of
+        true -> waiting;
+        false -> gossiping
+    end,
+    {ok, StateName, reset_gossip(#state{module=Module})}.
 
 waiting({Epoch, _, _}, State0) ->
     {ok, State1} = next_epoch(Epoch + 1, State0),
     {next_state, syncing, State1};
 waiting(_, State) ->
-    ?DEBUG_MSG("waiting...~n", []),
     {next_state, syncing, State}.
 
 syncing({Epoch, _, _} = Msg, #state{epoch=Epoch} = State) ->
@@ -79,7 +84,6 @@ syncing({R_Epoch, _, _}, #state{epoch=Epoch} = State0)
     {ok, State1} = next_epoch(R_Epoch + 1, State0),
     {next_state, syncing, State1};
 syncing(_, State) ->
-    ?DEBUG_MSG("syncing...~n", []),
     {next_state, syncing, State}.
 
 gossiping({R_Epoch, _, _} = Msg, #state{epoch=Epoch} = State)
@@ -88,39 +92,18 @@ gossiping({R_Epoch, _, _} = Msg, #state{epoch=Epoch} = State)
     {ok, State1} = next_epoch(R_Epoch, State),
     gossiping(Msg, State1);
 
-gossiping({_, {push, Msg, From}, RemoteNodes},
+gossiping({_, {Token, Msg, From}, RemoteNodes},
           #state{module=Module, nodecache=Nodes} = State0) when From =/= node() ->
-    ?DEBUG_MSG("push from ~p~n", [From]),
     NewNodes = reconcile_nodes(Nodes, RemoteNodes, From, Module),
-    Exported = erlang:function_exported(Module, symmetric_push, 2),
+    Exported = erlang:function_exported(Module, next(Token), 2),
 
-    {ok, State1} = case Module:push(Msg, From) of
+    {ok, State1} = case Module:Token(Msg, From) of
         {ok, Reply} when Exported == true ->
-            send_gossip(From, symmetric_push, Reply, State0);
+            send_gossip(From, next(Token), Reply, State0);
         _ ->
             {ok, State0}
     end,
-    {next_state, gossiping, State1#state{nodecache=NewNodes}};
-
-gossiping({_, {symmetric_push, Msg, From}, RemoteNodes},
-          #state{module=Module, nodecache=Nodes} = State0) when From =/= node() ->
-    ?DEBUG_MSG("symmetric_push from ~p~n", [From]),
-    NewNodes = reconcile_nodes(Nodes, RemoteNodes, From, Module),
-    Exported = erlang:function_exported(Module, commit, 2),
-
-    {ok, State1} = case Module:symmetric_push(Msg, From) of
-        {ok, Reply} when Exported == true ->
-            send_gossip(From, commit, Reply, State0);
-        _ ->
-            {ok, State0}
-    end,
-    {next_state, gossiping, State1#state{nodecache=NewNodes}};
-
-gossiping({_, {commit, Msg, From}, _}, #state{module=Module} = State)
-        when From =/= node() ->
-    ?DEBUG_MSG("commit from ~p~n", [From]),
-    Module:commit(Msg, From),
-    {next_state, gossiping, State}.
+    {next_state, gossiping, State1#state{nodecache=NewNodes}}.
 
 handle_info({nodedown, Node}, StateName, #state{module=Module} = State) ->
     NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodecache),
@@ -151,6 +134,10 @@ handle_info(tick, StateName, #state{module=Module} = State0) ->
 handle_event(_Msg, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event(aggregate, From, StateName, State) ->
+    Callstack = [From | State#state.callers],
+    {next_state, StateName, State#state{callers=Callstack}};
+
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
@@ -165,11 +152,14 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+next(push) -> symmetric_push;
+next(symmetric_push) -> commit.
+
 next_epoch(#state{module=Module, cycle=Cycle, epoch=Epoch, nodecache=Nodes} = State0) ->
     NextCycle = Cycle + 1,
     NodeCount = length(Nodes),
 
-    case NextCycle > Module:max_cycle(NodeCount) of
+    case NextCycle > Module:cycles(NodeCount) of
         true ->
             NextEpoch = Epoch + 1,
             next_epoch(NextEpoch, State0);
@@ -178,7 +168,6 @@ next_epoch(#state{module=Module, cycle=Cycle, epoch=Epoch, nodecache=Nodes} = St
     end.
 
 next_epoch(N, #state{module=Module} = State) ->
-    ?DEBUG_MSG("*** entered epoch ~p ***~n", [N]),
     ?TRY(Module:new_epoch(N)),
     {ok, State#state{epoch=N, cycle=0}}.
 
@@ -249,7 +238,6 @@ send_gossip(ToNode, Token, Data, #state{module=Module, nodecache=Nodes} = State0
         false ->
             {ok, State1};
         true ->
-            ?DEBUG_MSG("sending ~p to ~p~n", [Token, ToNode]),
             Epoch = State0#state.epoch,
             gen_fsm:send_event({?SERVER(Module), ToNode}, {Epoch, {Token, Data, node()}, Nodes}),
             {ok, State1}
