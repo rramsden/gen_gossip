@@ -15,9 +15,14 @@ Features
 
 * Safe-guards for preventing your network from being flood with gossip messages
 * Ability to register on node events: netsplits, joining, leaving, etc.
-* Prevent new nodes from joining in on a aggregation based protocols
+* Prevent new nodes from interrupting calculations in progress on a set of nodes.
+
+Usage
+=====
+
+See examples folder in src directory
 
 Status
 ======
 
-Still being developed, just pushing it to my Github account to work from home.
+Working towards the first stable version, still under development
