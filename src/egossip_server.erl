@@ -57,14 +57,10 @@ start_link(Module, Opts) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Module, Opts]) ->
+init([Module, _Opts]) ->
     send_after(Module:gossip_freq(), tick),
     net_kernel:monitor_nodes(true),
-    StateName = case lists:member(sync, Opts) of
-        true -> waiting;
-        false -> gossiping
-    end,
-    {ok, StateName, reset_gossip(#state{module=Module})}.
+    {ok, gossiping, reset_gossip(#state{module=Module})}.
 
 waiting({Epoch, _, _}, State0) ->
     {ok, State1} = next_epoch(Epoch + 1, State0),
