@@ -8,7 +8,6 @@
 -export([init/1,
          gossiping/2,
          waiting/2,
-         syncing/2,
          handle_info/3,
          handle_event/3,
          handle_sync_event/4,
@@ -33,11 +32,6 @@
 }).
 
 % debug
--define(TIMESTAMP, begin {_, {Hour,Min,Sec}} = erlang:localtime(),
-        lists:flatten(io_lib:format("~2..0B:~2..0B:~2..0B", [Hour, Min, Sec])) end).
--define(DEBUG_MSG(Str, Args), ?DEBUG andalso
-        io:format("[~s] :: ~s", [?TIMESTAMP, lists:flatten(io_lib:format(Str, Args))])).
-
 -define(RECHECK, 5).
 -define(SERVER(Module), list_to_atom("egossip_" ++ atom_to_list(Module))).
 
@@ -62,44 +56,50 @@ init([Module, _Opts]) ->
     net_kernel:monitor_nodes(true),
     {ok, gossiping, reset_gossip(#state{module=Module})}.
 
-waiting({Epoch, _, _}, State0) ->
-    {ok, State1} = next_epoch(Epoch + 1, State0),
-    {next_state, syncing, State1};
-waiting(_, State) ->
-    {next_state, syncing, State}.
-
-syncing({Epoch, _, _} = Msg, #state{epoch=Epoch} = State) ->
+waiting({R_Epoch, _, _} = Msg, #state{epoch=R_Epoch} = State) ->
+    % wait until were in the right era to start gossiping
     gossiping(Msg, State);
-syncing({R_Epoch, _, _}, #state{epoch=Epoch} = State0)
+waiting({R_Epoch, _, _}, #state{epoch=Epoch} = State0)
         when R_Epoch > Epoch ->
     % This resolves a race condition. For example, if two nodes A and B
     % join to form a cluster. Perhaps Node A was trying to sync with B then all
     % of a sudden A and B join C and D which have a larger era will
-    % cause B to increase his epoch leaving A stuck syncing for Epoch + 1 which
+    % cause B to increase his epoch leaving A stuck waiting for Epoch + 1 which
     % will never roll around
-    {ok, State1} = next_epoch(R_Epoch + 1, State0),
-    {next_state, syncing, State1};
-syncing(_, State) ->
-    {next_state, syncing, State}.
+    {ok, State1} = next_round(R_Epoch + 1, State0),
+    {next_state, waiting, State1};
+waiting(_, State) ->
+    {next_state, waiting, State}.
 
 gossiping({R_Epoch, _, _} = Msg, #state{epoch=Epoch} = State)
         when Epoch < R_Epoch ->
     % were not in the same era, change our era and reset gossip
-    {ok, State1} = next_epoch(R_Epoch, State),
+    {ok, State1} = next_round(R_Epoch, State),
     gossiping(Msg, State1);
-
-gossiping({_, {Token, Msg, From}, RemoteNodes},
+gossiping({_, {reconcile, _, From}, RemoteNodes},
+          #state{nodecache=Nodes, module=Module} = State) ->
+    {_, NewNodes} = reconcile_nodes(Nodes, RemoteNodes, From, Module),
+    {next_state, gossiping, State#state{nodecache=NewNodes}};
+gossiping({R_Epoch, {Token, Msg, From}, RemoteNodes},
           #state{module=Module, nodecache=Nodes} = State0) when From =/= node() ->
-    NewNodes = reconcile_nodes(Nodes, RemoteNodes, From, Module),
+    {WaitingToJoin, NewNodes} = reconcile_nodes(Nodes, RemoteNodes, From, Module),
     Exported = erlang:function_exported(Module, next(Token), 2),
 
-    {ok, State1} = case Module:Token(Msg, From) of
-        {ok, Reply} when Exported == true ->
-            send_gossip(From, next(Token), Reply, State0);
-        _ ->
-            {ok, State0}
-    end,
-    {next_state, gossiping, State1#state{nodecache=NewNodes}}.
+    case WaitingToJoin of
+        true ->
+            % exchange node data with neighbour then wait for next epoch
+            send_gossip(From, reconcile, nil, State0),
+            {ok, State1} = next_round(R_Epoch + 1, State0),
+            {next_state, waiting, State1#state{nodecache=NewNodes}};
+        false ->
+            {ok, State1} = case Module:Token(Msg, From) of
+                Reply when Exported == true ->
+                    send_gossip(From, next(Token), Reply, State0);
+                _ ->
+                    {ok, State0}
+            end,
+            {next_state, gossiping, State1#state{nodecache=NewNodes}}
+    end.
 
 handle_info({nodedown, Node}, StateName, #state{module=Module} = State) ->
     NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodecache),
@@ -113,17 +113,12 @@ handle_info({nodeup, _}, StateName, State) ->
 handle_info(tick, StateName, #state{module=Module} = State0) ->
     send_after(Module:gossip_freq(), tick),
 
-    {ok, State1} = next_epoch(State0),
+    {ok, State1} = next_cycle(State0),
     {ok, State2} = case get_peer(visible) of
         none_available ->
             {ok, State1};
         {ok, Node} ->
-           case Module:digest() of
-                {ok, Digest} ->
-                    send_gossip(Node, push, Digest, State1);
-                noreply ->
-                    {ok, State1}
-            end
+            send_gossip(Node, push, Module:digest(), State1)
     end,
     {next_state, StateName, State2}.
 
@@ -145,22 +140,23 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 
 next(push) -> symmetric_push;
-next(symmetric_push) -> commit.
+next(symmetric_push) -> commit;
+next(_) -> undefined.
 
-next_epoch(#state{module=Module, cycle=Cycle, epoch=Epoch, nodecache=Nodes} = State0) ->
+next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodecache=Nodes} = State0) ->
     NextCycle = Cycle + 1,
     NodeCount = length(Nodes),
 
     case NextCycle > Module:cycles(NodeCount) of
         true ->
+            ?TRY(Module:round_finish()),
             NextEpoch = Epoch + 1,
-            next_epoch(NextEpoch, State0);
+            next_round(NextEpoch, State0);
         false ->
             {ok, State0#state{cycle=NextCycle}}
     end.
 
-next_epoch(N, #state{module=Module} = State) ->
-    ?TRY(Module:new_epoch(N)),
+next_round(N, State) ->
     {ok, State#state{epoch=N, cycle=0}}.
 
 reconcile_nodes(A, B, From, Module) ->
@@ -168,22 +164,22 @@ reconcile_nodes(A, B, From, Module) ->
 
     if
         A == B ->
-            union(A, B);
+            {false, union(A, B)};
         length(A) > length(B) andalso Intersection == [] ->
-            union(A, [From]);
+            {false, union(A, [From])};
         length(A) < length(B) andalso Intersection == [] ->
             ?TRY(Module:join(B)),
-            union(B, [node_name()]);
+            {true, union(B, [node_name()])};
         length(Intersection) == 1 andalso length(B) > length(A) ->
             ?TRY(Module:join(B -- A)),
-            union(B, [node_name()]);
+            {true, union(B, [node_name()])};
         length(Intersection) > 0 ->
-            union(A, B);
+            {false, union(A, B)};
         A < B ->
             ?TRY(Module:join(B)),
-            union(B, [node_name()]);
+            {true, union(B, [node_name()])};
         true ->
-            union(A, [From])
+            {false, union(A, [From])}
     end.
 
 -ifdef(TEST).
