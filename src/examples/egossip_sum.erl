@@ -6,8 +6,6 @@
 %%
 %%   (a@machine1)> egossip_sum:start_link(25).
 %%   (b@machine1)> egossip_sum:start_link(25).
-%%   (a@machine2)> egossip_sum:calculate_sum().
-%%   (a@machine3)> 50
 %%
 %% @end
 
@@ -19,7 +17,8 @@
 
 %% egossip callbacks
 -export([gossip_freq/0,
-         max_cycle/1,
+         round_finish/0,
+         cycles/1,
          digest/0,
          push/2,
          symmetric_push/2]).
@@ -44,7 +43,7 @@ start_link(Number) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [Number], []).
 
 calculate_sum() ->
-    egossip:aggregate(?MODULE).
+    egossip:run(?MODULE).
 
 %%%===================================================================
 %%% egossip callbacks
@@ -62,13 +61,20 @@ gossip_freq() ->
 % Best to experiment and figure out how many cycles it takes
 % your algorithm to reach convergence then assign that number
 % @end
-max_cycle(NodeCount) ->
-    round(math:log(NodeCount * 5)) + 1.
+cycles(NodeCount) ->
+    round(math:log(NodeCount * 5) + 1).
+
+% @doc
+% Callback signifiying end of a round
+% @end
+round_finish() ->
+    gen_server:call(?MODULE, calculate).
 
 % @doc
 % First message sent when talking to another node.
 % @end
 digest() ->
+    io:format("polling digest~n"),
     gen_server:call(?MODULE, {get, digest}).
 
 % @doc
@@ -89,20 +95,24 @@ symmetric_push(Msg, _From) ->
 %%%===================================================================
 
 init([Number]) ->
-    egossip_sup:start_child(?MODULE),
+    egossip:new(?MODULE),
     {ok, #state{value=Number}}.
 
 handle_call({get, digest}, _From, State) ->
-    Reply = {ok, State#state.value},
-    {reply, Reply, State};
+    Digest = State#state.value,
+    {reply, Digest, State};
+
+handle_call(calculate, _From, State) ->
+    io:format("The answer is ~p~n", [State#state.value * (length(nodes()) + 1)]),
+    {reply, ok, State};
 
 handle_call({push, Value}, _From, State) ->
     NewValue = (Value + State#state.value) / 2,
-    {reply, {ok, NewValue}, State#state{value=NewValue}};
+    {reply, NewValue, State#state{value=NewValue}};
 
 handle_call({symmetric_push, Value}, _From, State) ->
     NewValue = (Value + State#state.value) / 2,
-    {reply, {ok, NewValue}, State#state{value=NewValue}}.
+    {reply, NewValue, State#state{value=NewValue}}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
