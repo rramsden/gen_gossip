@@ -84,7 +84,7 @@ gossiping({R_Epoch, {Token, Msg, From}, RemoteNodes},
           #state{module=Module, nodecache=Nodes} = State0) when From =/= node() ->
     {WaitingToJoin, NewNodes} = reconcile_nodes(Nodes, RemoteNodes, From, Module),
     Exported = erlang:function_exported(Module, next(Token), 2),
-    EpochEnabled = erlang:function_exported(Module, cycles, 2),
+    EpochEnabled = erlang:function_exported(Module, cycles, 1),
 
     case WaitingToJoin andalso EpochEnabled of
         true ->
