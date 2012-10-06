@@ -94,7 +94,7 @@ gossiping({R_Epoch, {Token, Msg, From}, RemoteNodes},
             {next_state, waiting, State1#state{nodecache=NewNodes}};
         false ->
             {ok, State1} = case Module:Token(Msg, From) of
-                Reply when Exported == true ->
+                {ok, Reply} when Exported == true ->
                     send_gossip(From, next(Token), Reply, State0);
                 _ ->
                     {ok, State0}
