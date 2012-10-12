@@ -82,11 +82,11 @@ gossiping({_, {reconcile, _, From}, RemoteNodes},
     {next_state, gossiping, State#state{nodecache=NewNodes}};
 gossiping({R_Epoch, {Token, Msg, From}, RemoteNodes},
           #state{module=Module, nodecache=Nodes} = State0) when From =/= node() ->
-    {WaitingToJoin, NewNodes} = reconcile_nodes(Nodes, RemoteNodes, From, Module),
+    {LostTieBreaker, NewNodes} = reconcile_nodes(Nodes, RemoteNodes, From, Module),
     Exported = erlang:function_exported(Module, next(Token), 2),
     EpochEnabled = erlang:function_exported(Module, cycles, 1),
 
-    case WaitingToJoin andalso EpochEnabled of
+    case LostTieBreaker andalso EpochEnabled of
         true ->
             % exchange node data with neighbour then wait for next epoch
             send_gossip(From, reconcile, nil, State0),
