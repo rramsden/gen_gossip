@@ -1,21 +1,19 @@
-REBAR=./rebar
+REBAR = ./rebar
+REBAR_CONFIG :=
 
-all: compile
+all : compile
 
-compile: get-deps
-	@$(REBAR) compile
+compile : get-deps
+	@$(REBAR) $(REBAR_CONFIG) compile
 
-get-deps:
-	@$(REBAR) get-deps
+get-deps :
+	@$(REBAR) $(REBAR_CONFIG) get-deps
 
-clean:
-	@$(REBAR) clean
+clean :
+	@$(REBAR) $(REBAR_CONFIG) clean
 
-test: clean compile
-	mv rebar.config rebar.prod.config
-	mv rebar.test.config rebar.config
-	@$(REBAR) eunit skip_deps=true
-	mv rebar.config rebar.test.config
-	mv rebar.prod.config rebar.config
+test : REBAR_CONFIG = -C rebar.test.config
+test : clean compile
+	@$(REBAR) $(REBAR_CONFIG) eunit skip_deps=true
 
-dist-clean: clean
+dist-clean : clean
