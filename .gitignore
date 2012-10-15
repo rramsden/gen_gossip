@@ -1,2 +1,8 @@
-ebin
 .DS_Store
+.eunit
+deps
+priv
+*.o
+*.beam
+*.plt
+ebin/*.app
