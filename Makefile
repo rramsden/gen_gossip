@@ -1,19 +1,18 @@
-REBAR = ./rebar
-REBAR_CONFIG :=
+REBAR := ./rebar
 
 all : compile
 
 compile : get-deps
-	@$(REBAR) $(REBAR_CONFIG) compile
+	$(REBAR) compile
 
 get-deps :
-	@$(REBAR) $(REBAR_CONFIG) get-deps
+	$(REBAR) get-deps
 
 clean :
-	@$(REBAR) $(REBAR_CONFIG) clean
+	$(REBAR) clean
 
-test : REBAR_CONFIG = -C rebar.test.config
+test : REBAR := EGOSSIP_TEST=1 $(REBAR)
 test : clean compile
-	@$(REBAR) $(REBAR_CONFIG) eunit skip_deps=true
+	$(REBAR) eunit skip_deps=true
 
 dist-clean : clean
