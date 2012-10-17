@@ -25,4 +25,5 @@ See examples folder in src directory
 Status
 ======
 
-Working towards the first stable version, still under development
+This is still a young project if you see anything wrong please
+open an issue or send a pull request.
