@@ -18,18 +18,7 @@
 -export([reconcile_nodes/4, can_gossip/1, reset_gossip/1]).
 -endif.
 
--record(state, {
-    cgossip = {0, {0,0,0}}, % current gossip count
-    mgossip = {1, {1,1,1}}, % max gossip count
-    nodecache = [node()],
-
-    % required for aggregation protocol
-    epoch = 0,
-    cycle = 0,
-    callers = [],
-
-    module
-}).
+-include("egossip.hrl").
 
 % debug
 -define(RECHECK, 5).

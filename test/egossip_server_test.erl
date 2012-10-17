@@ -1,13 +1,7 @@
 -module(egossip_server_test).
 -include_lib("eunit/include/eunit.hrl").
 
--record(state, {
-    cgossip = {0, {0,0,0}}, % current gossip count
-    mgossip = {1, {1,1,1}}, % max gossip count
-    nodes = [node()],
-    expired = [],
-    module
-}).
+-include("egossip.hrl").
 
 app_test_() ->
     {foreach,
