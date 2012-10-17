@@ -1,0 +1,18 @@
+%% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
+%% vim: set ts=4 sw=4 ft=erlang et:
+
+ExtraDeps = [{meck, "0.7.2",
+             {git, "https://github.com/eproxus/meck.git", {tag, "0.7.2"}}}],
+
+case os:getenv("EGOSSIP_TEST") of
+    false ->
+        CONFIG;
+    _ ->
+        case lists:keysearch(deps, 1, CONFIG) of
+            {value, {deps, Deps}} ->
+                NDeps = Deps ++ ExtraDeps,
+                lists:keyreplace(deps, 1, CONFIG, {deps, NDeps});
+            false ->
+                CONFIG ++ [{deps, ExtraDeps}]
+        end
+end.
