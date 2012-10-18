@@ -51,10 +51,10 @@ calculate_sum() ->
 
 % @doc
 % Defines the maximum threshold on messages that can be sent over
-% the network. {1,2} = 1 message every 2 seconds
+% the network. {10,30} = 10 message every 30 seconds
 % @end
 gossip_freq() ->
-    {1, 2}.
+    {30, 100}.
 
 % @doc
 % The total number of cycles needed to reach convergence.
