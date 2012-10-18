@@ -20,8 +20,10 @@
          round_finish/0,
          cycles/1,
          digest/0,
-         push/2,
-         symmetric_push/2]).
+         join/1,
+         expire/1,
+         symmetric_push/2,
+         push/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -89,6 +91,19 @@ push(Digest, _From) ->
 % @end
 symmetric_push(Msg, _From) ->
     gen_server:call(?MODULE, {symmetric_push, Msg}).
+
+% @doc
+% Callback triggered when you join a cluster of nodes
+% @end
+join(_NodeList) ->
+    do, nothing.
+
+% @doc
+% Callback triggered when a node crashes
+% @end
+expire(_Node) ->
+    do, nothing.
+
 
 %%%===================================================================
 %%% gen_server callbacks
