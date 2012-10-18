@@ -123,11 +123,11 @@ handle_call(calculate, _From, State) ->
 
 handle_call({push, Value}, _From, State) ->
     NewValue = (Value + State#state.value) / 2,
-    {reply, {ok, NewValue}, State#state{value=NewValue}};
+    {reply, {ok, State#state.value}, State#state{value=NewValue}};
 
 handle_call({symmetric_push, Value}, _From, State) ->
     NewValue = (Value + State#state.value) / 2,
-    {reply, {ok, NewValue}, State#state{value=NewValue}}.
+    {reply, nil, State#state{value=NewValue}}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
