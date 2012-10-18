@@ -75,12 +75,17 @@ gossiping({R_Epoch, {Token, Msg, From}, RemoteNodes},
     Exported = erlang:function_exported(Module, next(Token), 2),
     EpochEnabled = erlang:function_exported(Module, cycles, 1),
 
-    case LostTieBreaker andalso EpochEnabled of
+    case (NewNodes =/= Nodes) andalso EpochEnabled of
         true ->
-            % exchange node data with neighbour then wait for next epoch
-            send_gossip(From, reconcile, nil, State0),
-            {ok, State1} = next_round(R_Epoch + 1, State0),
-            {next_state, waiting, State1#state{nodecache=NewNodes}};
+            {ok, State1} = send_gossip(From, reconcile, nil, State0),
+
+            % if we lose the tiebreaker trying to join a cluster
+            % we need to wait until the next round to join the conversation
+            {ok, State2} = case LostTieBreaker of
+                true -> next_round(R_Epoch + 1, State1);
+                false -> {ok, State1}
+            end,
+            {next_state, waiting, State2#state{nodecache=NewNodes}};
         false ->
             {ok, State1} = case Module:Token(Msg, From) of
                 {ok, Reply} when Exported == true ->
