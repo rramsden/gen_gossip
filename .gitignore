@@ -6,3 +6,4 @@ priv
 *.beam
 *.plt
 ebin/*.app
+erl_crash.dump
