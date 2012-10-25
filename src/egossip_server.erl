@@ -45,61 +45,60 @@ init([Module, _Opts]) ->
     net_kernel:monitor_nodes(true),
     {ok, gossiping, reset_gossip(#state{module=Module})}.
 
-waiting({R_Epoch, _, _} = Msg, #state{epoch=R_Epoch} = State) ->
-    % wait until were in the right era to start gossiping
-    gossiping(Msg, State);
-waiting({R_Epoch, _, _}, #state{epoch=Epoch} = State0)
+waiting({R_Epoch, _, _} = Msg, #state{wait_for=R_Epoch} = State) ->
+    gossiping(Msg, State#state{wait_for=undefined, epoch=R_Epoch});
+waiting({R_Epoch, _, _}, #state{wait_for=Epoch} = State0)
         when R_Epoch > Epoch ->
-    % This resolves a race condition. For example, if two nodes A and B
-    % join to form a cluster. Perhaps Node A was trying to sync with B then all
-    % of a sudden A and B join C and D which have a larger era will
-    % cause B to increase his epoch leaving A stuck waiting for Epoch + 1 which
-    % will never roll around
-    {ok, State1} = next_round(R_Epoch + 1, State0),
-    {next_state, waiting, State1};
+    % prevent a node from waiting forever
+    WaitFor = R_Epoch + 1,
+    {next_state, waiting, State0#state{wait_for=WaitFor}};
 waiting(_, State) ->
     {next_state, waiting, State}.
 
-gossiping({R_Epoch, _, _} = Msg, #state{epoch=Epoch} = State)
-        when Epoch < R_Epoch ->
-    % were not in the same era, change our era and reset gossip
-    {ok, State1} = next_round(R_Epoch, State),
-    gossiping(Msg, State1);
-gossiping({_, {reconcile, _, From}, RemoteNodes},
-          #state{nodecache=Nodes, module=Module} = State) ->
-    {_, NewNodes} = reconcile_nodes(Nodes, RemoteNodes, From, Module),
-    {next_state, gossiping, State#state{nodecache=NewNodes}};
-gossiping({R_Epoch, {Token, Msg, From}, RemoteNodes},
-          #state{module=Module, nodecache=Nodes} = State0) when From =/= node() ->
-    {LostTieBreaker, NewNodes} = reconcile_nodes(Nodes, RemoteNodes, From, Module),
-    Exported = erlang:function_exported(Module, next(Token), 2),
-    EpochEnabled = erlang:function_exported(Module, cycles, 1),
+%
+% Gossip Cases
+%
+% 1. epochs and nodelists match
+%       - gossip
+% 2. (epoch_remote > epoch_local) and nodelists match
+%       - set epoch to epoch_remote, gossip
+% 3. (epoch_remote > epoch_local) and nodelists mismatch
+%       - wait for (epoch_remote + 1)
+% 4. epochs match and nodelists mismatch
+%       - merge nodelists
 
-    case (NewNodes =/= Nodes) andalso EpochEnabled of
-        true ->
-            {ok, State1} = send_gossip(From, reconcile, nil, State0),
-
-            % if we lose the tiebreaker trying to join a cluster
-            % we need to wait until the next round to join the conversation
-            {ok, State2} = case LostTieBreaker of
-                true -> next_round(R_Epoch + 1, State1);
-                false -> {ok, State1}
-            end,
-            {next_state, waiting, State2#state{nodecache=NewNodes}};
-        false ->
-            {ok, State1} = case Module:Token(Msg, From) of
-                {ok, Reply} when Exported == true ->
-                    send_gossip(From, next(Token), Reply, State0);
-                _ ->
-                    {ok, State0}
-            end,
-            {next_state, gossiping, State1#state{nodecache=NewNodes}}
-    end.
+% 1.
+gossiping({Epoch, {Token, Msg, From}, Nodelist},
+        #state{module=Module, epoch=Epoch, nodes=Nodelist} = State0) ->
+    {ok, State1} = do_gossip(Module, Token, Msg, From, State0),
+    {next_state, gossiping, State1};
+% 2.
+gossiping({R_Epoch, {Token, Msg, From}, Nodelist},
+        #state{module=Module, epoch=Epoch, nodes=Nodelist} = State0)
+        when R_Epoch > Epoch ->
+    {ok, State1} = next_round(R_Epoch, State0),
+    {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
+    {next_state, gossiping, State2};
+% 3.
+gossiping({R_Epoch, _, R_Nodelist},
+        #state{epoch=Epoch, nodes=Nodelist} = State0)
+        when R_Epoch > Epoch, R_Nodelist =/= Nodelist ->
+    WaitFor = R_Epoch + 1,
+    {next_state, waiting, State0#state{wait_for=WaitFor}};
+% 4.
+gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
+        #state{module=Module, nodes=Nodelist, epoch=Epoch} = State0)
+        when R_Nodelist =/= Nodelist ->
+    {_, Nodelist1} = reconcile_nodes(Nodelist, R_Nodelist, From, State0#state.module),
+    {ok, State1} = do_gossip(Module, Token, Msg, From, State0),
+    {next_state, gossiping, State1#state{nodes=Nodelist1}};
+gossiping(_, State) ->
+    {next_state, gossiping, State}.
 
 handle_info({nodedown, Node}, StateName, #state{module=Module} = State) ->
-    NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodecache),
+    NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodes),
     ?TRY(Module:expire(Node)),
-    {next_state, StateName, State#state{nodecache=NodesLeft}};
+    {next_state, StateName, State#state{nodes=NodesLeft}};
 
 handle_info({nodeup, _}, StateName, State) ->
     % this is handled when nodes gossip
@@ -141,17 +140,26 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+do_gossip(Module, Token, Msg, From, State0) ->
+    Exported = erlang:function_exported(Module, next(Token), 2),
+
+    case Module:Token(Msg, From) of
+        {ok, Reply} when Exported == true ->
+            send_gossip(From, next(Token), Reply, State0);
+        _ ->
+            {ok, State0}
+    end.
+
 next(push) -> symmetric_push;
 next(symmetric_push) -> commit;
 next(_) -> undefined.
 
-next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodecache=Nodes} = State0) ->
+next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodes=Nodes} = State0) ->
     NextCycle = Cycle + 1,
     NodeCount = length(Nodes),
 
     case NextCycle > Module:cycles(NodeCount) of
         true ->
-            ?TRY(Module:round_finish()),
             NextEpoch = Epoch + 1,
             next_round(NextEpoch, State0);
         false ->
@@ -159,6 +167,9 @@ next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodecache=Nodes} = St
     end.
 
 next_round(N, State) ->
+    Module = State#state.module,
+    NodeCount = length(State#state.nodes),
+    ?TRY(Module:round_finish(NodeCount)),
     {ok, State#state{epoch=N, cycle=0}}.
 
 reconcile_nodes(A, B, From, Module) ->
@@ -222,7 +233,7 @@ reset_gossip(#state{module=Module} = State0) ->
             State0#state{ cgossip={0, Now}, mgossip={Num, Expire} }
     end.
 
-send_gossip(ToNode, Token, Data, #state{module=Module, nodecache=Nodes} = State0) ->
+send_gossip(ToNode, Token, Data, #state{module=Module, nodes=Nodes} = State0) ->
     {CanSend, State1} = can_gossip(State0),
     case CanSend of
         false ->

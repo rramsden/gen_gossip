@@ -17,7 +17,7 @@
 
 %% egossip callbacks
 -export([gossip_freq/0,
-         round_finish/0,
+         round_finish/1,
          cycles/1,
          digest/0,
          join/1,
@@ -69,7 +69,8 @@ cycles(NodeCount) ->
 % @doc
 % Callback signifiying end of a round
 % @end
-round_finish() ->
+round_finish(NodeCount) ->
+    io:format("round finished with ~p nodes~n", [NodeCount]),
     gen_server:call(?MODULE, calculate).
 
 % @doc
@@ -95,8 +96,8 @@ symmetric_push(Msg, _From) ->
 % @doc
 % Callback triggered when you join a cluster of nodes
 % @end
-join(_NodeList) ->
-    do, nothing.
+join(Nodelist) ->
+    io:format("Joined ~p~n", [Nodelist]).
 
 % @doc
 % Callback triggered when a node crashes
