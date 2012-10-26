@@ -106,22 +106,14 @@ handle_info({nodeup, _}, StateName, State) ->
 
 handle_info(tick, StateName, #state{module=Module} = State0) ->
     send_after(Module:gossip_freq(), tick),
-    EpochEnabled = erlang:function_exported(Module, cycles, 1),
 
-    {ok, State1} = case EpochEnabled of
-        true ->
-            next_cycle(State0);
-        false ->
-            {ok, State0}
-    end,
-
-    {ok, State2} = case get_peer(visible) of
+    {ok, State1} = case get_peer(visible) of
         none_available ->
-            {ok, State1};
+            {ok, State0};
         {ok, Node} ->
-            send_gossip(Node, push, Module:digest(), State1)
+            send_gossip(Node, push, Module:digest(), State0)
     end,
-    {next_state, StateName, State2}.
+    {next_state, StateName, State1}.
 
 handle_event(_Msg, StateName, State) ->
     {next_state, StateName, State}.
@@ -142,10 +134,14 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 do_gossip(Module, Token, Msg, From, State0) ->
     Exported = erlang:function_exported(Module, next(Token), 2),
+    EpochEnabled = erlang:function_exported(Module, cycles, 1),
 
     case Module:Token(Msg, From) of
         {ok, Reply} when Exported == true ->
             send_gossip(From, next(Token), Reply, State0);
+        _ when EpochEnabled == true ->
+            % cycle ends when last message is received in gossip
+            next_cycle(State0);
         _ ->
             {ok, State0}
     end.
