@@ -41,7 +41,7 @@ start_link(Module, Opts) ->
 %%%===================================================================
 
 init([Module, _Opts]) ->
-    send_after(Module:gossip_freq(), tick),
+    send_after(Module, tick),
     net_kernel:monitor_nodes(true),
     {ok, gossiping, reset_gossip(#state{module=Module})}.
 
@@ -105,7 +105,7 @@ handle_info({nodeup, _}, StateName, State) ->
     {next_state, StateName, State};
 
 handle_info(tick, StateName, #state{module=Module} = State0) ->
-    send_after(Module:gossip_freq(), tick),
+    send_after(Module, tick),
 
     {ok, State1} = case get_peer(visible) of
         none_available ->
@@ -205,11 +205,13 @@ get_peer(Opts) ->
             {ok, lists:nth(N, Nodes)}
     end.
 
-send_after(never, _Message) ->
-    ok;
-send_after({Num,Sec}, Message) ->
-    send_after(trunc(1000 / (Num/Sec)), Message);
-send_after(After, Message) ->
+send_after(Module, Message) ->
+    {Num, Sec} = Module:gossip_freq(),
+    Tick = trunc(1000 / (Num/Sec)),
+    After = case erlang:function_exported(Module, commit, 2) of
+        true -> Tick * 2;
+        false -> Tick
+    end,
     erlang:send_after(After, self(), Message).
 
 can_gossip(#state{ cgossip={CM, CT}, mgossip={MM, MT} } = State) when CT < MT ->
