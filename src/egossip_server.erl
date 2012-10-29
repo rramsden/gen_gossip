@@ -41,7 +41,7 @@ start_link(Module, Opts) ->
 %%%===================================================================
 
 init([Module, _Opts]) ->
-    send_after(Module, tick),
+    send_after(Module:gossip_freq(), tick),
     net_kernel:monitor_nodes(true),
     {ok, gossiping, reset_gossip(#state{module=Module})}.
 
@@ -105,7 +105,7 @@ handle_info({nodeup, _}, StateName, State) ->
     {next_state, StateName, State};
 
 handle_info(tick, StateName, #state{module=Module} = State0) ->
-    send_after(Module, tick),
+    send_after(Module:gossip_freq(), tick),
 
     {ok, State1} = case get_peer(visible) of
         none_available ->
@@ -134,12 +134,12 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 do_gossip(Module, Token, Msg, From, State0) ->
     Exported = erlang:function_exported(Module, next(Token), 2),
-    EpochEnabled = erlang:function_exported(Module, cycles, 1),
+    AggregateProtocol = is_aggregation_protocol(Module),
 
     case Module:Token(Msg, From) of
         {ok, Reply} when Exported == true ->
             send_gossip(From, next(Token), Reply, State0);
-        _ when EpochEnabled == true ->
+        _ when AggregateProtocol == true ->
             % cycle ends when last message is received in gossip
             next_cycle(State0);
         _ ->
@@ -205,14 +205,22 @@ get_peer(Opts) ->
             {ok, lists:nth(N, Nodes)}
     end.
 
-send_after(Module, Message) ->
-    {Num, Sec} = Module:gossip_freq(),
-    Tick = trunc(1000 / (Num/Sec)),
-    After = case erlang:function_exported(Module, commit, 2) of
-        true -> Tick * 2;
-        false -> Tick
-    end,
+send_after(never, _Message) ->
+    ok;
+send_after({Num,Sec}, Message) ->
+    send_after(trunc(1000 / (Num/Sec)), Message);
+send_after(After, Message) ->
     erlang:send_after(After, self(), Message).
+
+% if we implement an aggregation based protocol only
+% count push when checking can_gossip/1
+can_gossip(push, State) ->
+    can_gossip(State);
+can_gossip(_, State) ->
+    case is_aggregation_protocol(State#state.module) of
+        true -> {true, State};
+        false -> can_gossip(State)
+    end.
 
 can_gossip(#state{ cgossip={CM, CT}, mgossip={MM, MT} } = State) when CT < MT ->
     {CM < MM, State#state{ cgossip={CM+1, os:timestamp()} }};
@@ -232,7 +240,7 @@ reset_gossip(#state{module=Module} = State0) ->
     end.
 
 send_gossip(ToNode, Token, Data, #state{module=Module, nodes=Nodes} = State0) ->
-    {CanSend, State1} = can_gossip(State0),
+    {CanSend, State1} = can_gossip(Token, State0),
     case CanSend of
         false ->
             {ok, State1};
@@ -241,6 +249,9 @@ send_gossip(ToNode, Token, Data, #state{module=Module, nodes=Nodes} = State0) ->
             gen_fsm:send_event({?SERVER(Module), ToNode}, {Epoch, {Token, Data, node()}, Nodes}),
             {ok, State1}
     end.
+
+is_aggregation_protocol(Module) ->
+    erlang:function_exported(Module, cycles, 1).
 
 union(L1, L2) ->
     sets:to_list(sets:union(sets:from_list(L1), sets:from_list(L2))).
