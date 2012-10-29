@@ -60,11 +60,13 @@ waiting(_, State) ->
 %
 % 1. epochs and nodelists match
 %       - gossip
-% 2. (epoch_remote > epoch_local) and nodelists match
-%       - set epoch to epoch_remote, gossip
-% 3. (epoch_remote > epoch_local) and nodelists mismatch
-%       - wait for (epoch_remote + 1)
-% 4. epochs match and nodelists mismatch
+% 2. (epoch_remote > epoch_local)
+%       if intersection non-empty
+%         - merge lists, goto #2
+%       else
+%         - wait for (epoch_remote + 1)
+%       end
+% 3. epochs match and nodelists mismatch
 %       - merge nodelists
 
 % 1.
@@ -73,19 +75,21 @@ gossiping({Epoch, {Token, Msg, From}, Nodelist},
     {ok, State1} = do_gossip(Module, Token, Msg, From, State0),
     {next_state, gossiping, State1};
 % 2.
-gossiping({R_Epoch, {Token, Msg, From}, Nodelist},
-        #state{module=Module, epoch=Epoch, nodes=Nodelist} = State0)
+gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
+        #state{epoch=Epoch, module=Module, nodes=Nodelist} = State0)
         when R_Epoch > Epoch ->
-    {ok, State1} = next_round(R_Epoch, State0),
-    {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
-    {next_state, gossiping, State2};
+    % We take the intersection here because a node in our cluster
+    % may have reconciled with a node outside of it.
+    case intersection(R_Nodelist, Nodelist) of
+        [] ->
+            {next_state, waiting, State0#state{wait_for = (R_Epoch + 1)}};
+        _ ->
+            {_, Nodelist1} = reconcile_nodes(Nodelist, R_Nodelist, From, Module),
+            {ok, State1} = next_round(R_Epoch, State0),
+            {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
+            {next_state, gossiping, State2#state{nodes=Nodelist1}}
+    end;
 % 3.
-gossiping({R_Epoch, _, R_Nodelist},
-        #state{epoch=Epoch, nodes=Nodelist} = State0)
-        when R_Epoch > Epoch, R_Nodelist =/= Nodelist ->
-    WaitFor = R_Epoch + 1,
-    {next_state, waiting, State0#state{wait_for=WaitFor}};
-% 4.
 gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
         #state{module=Module, nodes=Nodelist, epoch=Epoch} = State0)
         when R_Nodelist =/= Nodelist ->
