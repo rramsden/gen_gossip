@@ -3,8 +3,7 @@
 
 %% API
 -export([start_link/0,
-         start_child/1,
-         start_child/2]).
+         start_child/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -16,14 +15,15 @@
 %% API functions
 %% ===================================================================
 
+-spec start_link() -> supervisor:startlink_ret().
+
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-start_child(Module) ->
-    start_child(Module, []).
+-spec start_child(module()) -> supervisor:startchild_ret().
 
-start_child(Module, Opts) ->
-    supervisor:start_child(?MODULE, [Module, Opts]).
+start_child(Module) ->
+    supervisor:start_child(?MODULE, [Module]).
 
 %% ===================================================================
 %% Supervisor callbacks

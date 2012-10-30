@@ -2,7 +2,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([ start_link/1, start_link/2 ]).
+-export([start_link/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -30,17 +30,21 @@
 %%% API
 %%%===================================================================
 
-start_link(Module) ->
-    start_link(Module, []).
+%% @doc
+%% Starts egossip server with registered handler module
+%% @end
+-spec start_link(module()) -> {ok,Pid} | ignore | {error,Error} when
+    Pid :: pid(),
+    Error :: {already_started, Pid} | term().
 
-start_link(Module, Opts) ->
-    gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module, Opts], []).
+start_link(Module) ->
+    gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module], []).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Module, _Opts]) ->
+init([Module]) ->
     send_after(Module:gossip_freq(), tick),
     net_kernel:monitor_nodes(true),
     {ok, gossiping, reset_gossip(#state{module=Module})}.

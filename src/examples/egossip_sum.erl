@@ -1,11 +1,14 @@
 %% @doc
-%% Example gen_sever which implements egossip and calculates
-%% a summation across mutliple nodes in a cluster.
+%% Implements a simple aggregation-based summation protocol.
+%% cycles/1 defines how long it takes to converge on the answer.
+%% We calculate the sum of the cluster by taking the average of value
+%% and multiplying it by the number of nodes in the conversation.
 %%
 %% Usage:
 %%
 %%   (a@machine1)> egossip_sum:start_link(25).
 %%   (b@machine1)> egossip_sum:start_link(25).
+%%   (b@machine1)> net_adm:ping('a@machine1').
 %%
 %% @end
 
@@ -13,7 +16,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, calculate_sum/0]).
+-export([start_link/1]).
 
 %% egossip callbacks
 -export([gossip_freq/0,
@@ -44,9 +47,6 @@
 start_link(Number) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [Number], []).
 
-calculate_sum() ->
-    egossip:run(?MODULE).
-
 %%%===================================================================
 %%% egossip callbacks
 %%%===================================================================
@@ -70,14 +70,12 @@ cycles(NodeCount) ->
 % Callback signifiying end of a round
 % @end
 round_finish(NodeCount) ->
-    io:format("round finished with ~p nodes~n", [NodeCount]),
-    gen_server:call(?MODULE, calculate).
+    gen_server:call(?MODULE, {event, finish, NodeCount}).
 
 % @doc
 % First message sent when talking to another node.
 % @end
 digest() ->
-    io:format("polling digest~n"),
     gen_server:call(?MODULE, {get, digest}).
 
 % @doc
@@ -105,21 +103,22 @@ join(Nodelist) ->
 expire(_Node) ->
     do, nothing.
 
-
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 init([Number]) ->
-    egossip:new(?MODULE),
+    egossip:register_handler(?MODULE),
     {ok, #state{value=Number}}.
 
 handle_call({get, digest}, _From, State) ->
+    io:format("sending digest...~n"),
     Digest = State#state.value,
     {reply, Digest, State};
 
-handle_call(calculate, _From, State) ->
-    io:format("The answer is ~p~n", [State#state.value * (length(nodes()) + 1)]),
+handle_call({event, finish, NodeCount}, _From, State) ->
+    io:format("=== end of round ===~n"),
+    io:format(">>> SUM : ~p~n", [State#state.value * NodeCount]),
     {reply, ok, State};
 
 handle_call({push, Value}, _From, State) ->
