@@ -33,25 +33,25 @@ reconcile_nodes(Module) ->
     fun() ->
         % equally sized clusters must do a tiebreaker by comparing their
         % node lists to see which island has to join another
-        ?assertEqual({true, [a,c,d]}, egossip_server:reconcile_nodes([a,b], [c,d], d, Module)),
+        ?assertEqual([a,c,d], egossip_server:reconcile_nodes([a,b], [c,d], d, Module)),
         ?assert( meck:called(Module, join, [ [c,d] ]) ),
 
         % smaller sized islands must join a larger island
-        ?assertEqual({true, [a,b,c,d]}, egossip_server:reconcile_nodes([a], [b,c,d], d, Module)),
+        ?assertEqual([a,b,c,d], egossip_server:reconcile_nodes([a], [b,c,d], d, Module)),
         ?assert( meck:called(Module, join, [ [b,c,d] ]) ),
 
         % since the remote node is joining our cluster we don't get a join notice.
         % once we talk to him he will get a join notice on his side
-        ?assertEqual({false , [a,b,c,d]}, egossip_server:reconcile_nodes([a,c,d], [b], b, Module)),
+        ?assertEqual([a,b,c,d], egossip_server:reconcile_nodes([a,c,d], [b], b, Module)),
         ?assert( not meck:called(Module, join, [ [b] ]) ),
 
         % node lists are the same, don't do anything
-        ?assertEqual({false, [a,b]}, egossip_server:reconcile_nodes([a,b], [a,b], b, Module)),
+        ?assertEqual([a,b], egossip_server:reconcile_nodes([a,b], [a,b], b, Module)),
 
         % Two islands [a,b] and [c,d], a joins c #=> [a,c,d] and b joins d #=> [b,c,d]
         % an intersection now exists if these two islands talk with eachother.
         % reconcile_nodes should just perform an union and not trigger a join event.
-        ?assertEqual({false, [a,b,c,d]}, egossip_server:reconcile_nodes([a,c,d], [b,c,d], c, Module))
+        ?assertEqual([a,b,c,d], egossip_server:reconcile_nodes([a,c,d], [b,c,d], c, Module))
     end.
 
 never_can_gossip(Module) ->

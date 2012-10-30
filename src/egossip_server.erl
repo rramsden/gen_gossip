@@ -88,7 +88,7 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
         [] ->
             {next_state, waiting, State0#state{wait_for = (R_Epoch + 1)}};
         _ ->
-            {_, Nodelist1} = reconcile_nodes(Nodelist, R_Nodelist, From, Module),
+            Nodelist1 = reconcile_nodes(Nodelist, R_Nodelist, From, Module),
             {ok, State1} = next_round(R_Epoch, State0),
             {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
             {next_state, gossiping, State2#state{nodes=Nodelist1}}
@@ -97,7 +97,7 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
 gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
         #state{module=Module, nodes=Nodelist, epoch=Epoch} = State0)
         when R_Nodelist =/= Nodelist ->
-    {_, Nodelist1} = reconcile_nodes(Nodelist, R_Nodelist, From, State0#state.module),
+    Nodelist1 = reconcile_nodes(Nodelist, R_Nodelist, From, State0#state.module),
     {ok, State1} = do_gossip(Module, Token, Msg, From, State0),
     {next_state, gossiping, State1#state{nodes=Nodelist1}};
 gossiping(_, State) ->
@@ -176,27 +176,34 @@ next_round(N, State) ->
     ?TRY(Module:round_finish(NodeCount)),
     {ok, State#state{epoch=N, cycle=0}}.
 
+%% @doc
+%% This handles cluster membership. We don't use the ErlangVM
+%% to determine whether a node is taking part in a conversation.
+%% The reason is because it would prevent aggregation-based protocols
+%% from converging. If nodes are continuously joining a conversation
+%% will never converge on an answer.
+%% @end
 reconcile_nodes(A, B, From, Module) ->
     Intersection = intersection(A, B),
 
     if
         A == B ->
-            {false, union(A, B)};
+            union(A, B);
         length(A) > length(B) andalso Intersection == [] ->
-            {false, union(A, [From])};
+            union(A, [From]);
         length(A) < length(B) andalso Intersection == [] ->
             ?TRY(Module:join(B)),
-            {true, union(B, [node_name()])};
+            union(B, [node_name()]);
         length(Intersection) == 1 andalso length(B) > length(A) ->
             ?TRY(Module:join(B -- A)),
-            {true, union(B, [node_name()])};
+            union(B, [node_name()]);
         length(Intersection) > 0 ->
-            {false, union(A, B)};
+            union(A, B);
         A < B ->
             ?TRY(Module:join(B)),
-            {true, union(B, [node_name()])};
+            union(B, [node_name()]);
         true ->
-            {false, union(A, [From])}
+            union(A, [From])
     end.
 
 -ifdef(TEST).
