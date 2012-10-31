@@ -15,7 +15,10 @@
          code_change/4]).
 
 -ifdef(TEST).
--export([reconcile_nodes/4, can_gossip/1, reset_gossip/1]).
+-export([reconcile_nodes/4, send_gossip/4, can_gossip/1, reset_gossip/1]).
+-define(mockable(Fun), ?MODULE:Fun).
+-else.
+-define(mockable(Fun), Fun).
 -endif.
 
 -include("egossip.hrl").
@@ -23,7 +26,6 @@
 % debug
 -define(RECHECK, 5).
 -define(SERVER(Module), list_to_atom("egossip_" ++ atom_to_list(Module))).
-
 -define(TRY(Code), (catch begin Code end)).
 
 %%%===================================================================
@@ -165,7 +167,7 @@ handle_info(tick, StateName, #state{module=Module} = State0) ->
         none_available ->
             {ok, State1};
         {ok, Node} ->
-            send_gossip(Node, push, Module:digest(), State1)
+            ?mockable( send_gossip(Node, push, Module:digest(), State1) )
     end,
     {next_state, StateName, State2}.
 
@@ -191,7 +193,7 @@ do_gossip(Module, Token, Msg, From, State0) ->
 
     case Module:Token(Msg, From) of
         {ok, Reply} when Exported == true ->
-            send_gossip(From, next(Token), Reply, State0);
+            ?mockable( send_gossip(From, next(Token), Reply, State0) );
         _ ->
             {ok, State0}
     end.
