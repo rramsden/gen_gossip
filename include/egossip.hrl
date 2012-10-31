@@ -11,3 +11,13 @@
 
     module
 }).
+
+-type from() :: node().
+-type token() :: atom().
+-type epoch() :: integer().
+-type message() :: {token(), term(), from()}.
+
+-type handle_event_ret() :: {next_state, NextStateName :: atom(), NewStateData :: term()} |
+    {next_state, NextStateName :: atom(), NewStateData :: term(),
+     timeout() | hibernate} |
+    {stop, Reason :: term(), NewStateData :: term()}.

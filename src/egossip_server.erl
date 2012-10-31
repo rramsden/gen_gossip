@@ -49,6 +49,14 @@ init([Module]) ->
     net_kernel:monitor_nodes(true),
     {ok, gossiping, reset_gossip(#state{module=Module})}.
 
+%% @doc
+%% A node will transition into waiting state if there exists
+%% a higher epoch converstation happening. The node will then
+%% wait for (epoch + 1) to roll around to join in on the conversation
+%% @end
+
+-spec waiting({epoch(), message(), [node()]}, StateData :: term()) -> handle_event_ret().
+
 waiting({R_Epoch, _, _} = Msg, #state{wait_for=R_Epoch} = State) ->
     gossiping(Msg, State#state{wait_for=undefined, epoch=R_Epoch});
 waiting({R_Epoch, _, _}, #state{wait_for=Epoch} = State0)
@@ -59,41 +67,68 @@ waiting({R_Epoch, _, _}, #state{wait_for=Epoch} = State0)
 waiting(_, State) ->
     {next_state, waiting, State}.
 
-%
-% Gossip Cases
-%
-% 1. epochs and nodelists match
-%       - gossip
-% 2. (epoch_remote > epoch_local)
-%       if intersection non-empty
-%         - merge lists, goto #2
-%       else
-%         - wait for (epoch_remote + 1)
-%       end
-% 3. epochs match and nodelists mismatch
-%       - merge nodelists
+%% @doc
+%% Nodes which have the same epoch and haven't been split into islands
+%% will be able to gossip in a conversation. Here's what happens
+%% in the other cases:
+%%
+%% 1. epochs and nodelists match
+%%       - gossip
+%% 2. (epoch_remote > epoch_local)
+%%       - use higher epoch, gossip
+%% 3. (epoch_remote > epoch_local)
+%%       if intersection non-empty
+%%         - merge lists, goto #2
+%%       else
+%%         - wait for (epoch_remote + 1)
+%%       end
+%% 4. epochs match and nodelists mismatch
+%%       - merge nodelists
+%% @end
+-spec gossiping({epoch(), message(), [node()]}, StateData :: term()) -> handle_event_ret().
 
 % 1.
 gossiping({Epoch, {Token, Msg, From}, Nodelist},
         #state{module=Module, epoch=Epoch, nodes=Nodelist} = State0) ->
     {ok, State1} = do_gossip(Module, Token, Msg, From, State0),
     {next_state, gossiping, State1};
+
 % 2.
+gossiping({R_Epoch, {Token, Msg, From}, Nodelist},
+        #state{epoch=Epoch, module=Module, nodes=Nodelist} = State0)
+        when R_Epoch > Epoch ->
+    % This case handles when a node flips over the next epoch and contacts
+    % another node that hasn't updated its epoch yet. This happens due to
+    % clock-drift between nodes. You'll never have everything perfectly in-sync
+    % unless your Google and have atomic GPS clocks... To keep up with the highest
+    % epoch we simply set our epoch to the new value keeping things in-sync.
+    {ok, State1} = next_round(R_Epoch, State0),
+    {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
+    {next_state, gossiping, State2};
+
+% 3.
 gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
         #state{epoch=Epoch, module=Module, nodes=Nodelist} = State0)
         when R_Epoch > Epoch ->
-    % We take the intersection here because a node in our cluster
-    % may have reconciled with a node outside of it.
+    % The intersection is taken to prevent nodes from waiting twice
+    % to enter into the next epoch. This happens when islands
+    % are trying to join. For example:
+    %
+    %   Suppose we have two islands [a,b] and [c,d]
+    %   'a' and 'b' are waiting, 'c' and 'd' both have a higher epoch
+    %   'a' reconciles with [c,d] when epoch rolls around forming island [a,c,d]
+    %   'a' then talks to 'b', since [a,b] =/= [a,c,d] 'b' its forced to wait again
+    %
     case intersection(R_Nodelist, Nodelist) of
         [] ->
             {next_state, waiting, State0#state{wait_for = (R_Epoch + 1)}};
-        _ ->
+        _NonEmpty ->
             Nodelist1 = reconcile_nodes(Nodelist, R_Nodelist, From, Module),
             {ok, State1} = next_round(R_Epoch, State0),
             {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
             {next_state, gossiping, State2#state{nodes=Nodelist1}}
     end;
-% 3.
+% 4.
 gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
         #state{module=Module, nodes=Nodelist, epoch=Epoch} = State0)
         when R_Nodelist =/= Nodelist ->
@@ -109,7 +144,8 @@ handle_info({nodedown, Node}, StateName, #state{module=Module} = State) ->
     {next_state, StateName, State#state{nodes=NodesLeft}};
 
 handle_info({nodeup, _}, StateName, State) ->
-    % this is handled when nodes gossip
+    % don't care about when a node is up, this is handled
+    % when nodes gossip with eachother
     {next_state, StateName, State};
 
 handle_info(tick, StateName, #state{module=Module} = State0) ->
