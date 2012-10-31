@@ -157,9 +157,9 @@ handle_info(tick, StateName, #state{module=Module} = State0) ->
     % aggregation protocols only use epochs and
     % round control. epidemic protocols don't need it
     {ok, State1} = case AggregationBased of
-        true ->
+        true when StateName =/= waiting ->
             next_cycle(State0);
-        false ->
+        _ ->
             {ok, State0}
     end,
 

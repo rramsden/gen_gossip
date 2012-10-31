@@ -18,7 +18,8 @@ app_test_() ->
             fun gossips_if_nodelist_and_epoch_match_/1,
             fun use_latest_epoch_if_nodelist_match_/1,
             fun reconciles_nodelists_/1,
-            fun remove_downed_node_/1
+            fun remove_downed_node_/1,
+            fun dont_increment_cycle_in_wait_state_/1
             ]}.
 
 setup() ->
@@ -28,6 +29,7 @@ setup() ->
     Module = gossip_test,
     meck:new(Module),
     meck:expect(Module, gossip_freq, 0, {1,2}),
+    meck:expect(Module, cycles, 1, 10),
     meck:expect(Module, digest, 0, ok),
     meck:expect(Module, push, 2, {ok, reply}),
     meck:expect(Module, symmetric_push, 2, {ok, reply}),
@@ -254,4 +256,20 @@ remove_downed_node_(Module) ->
         {next_state, statename, State1} = egossip_server:handle_info({nodedown, b}, statename, State0),
 
         ?assertEqual([a,c], State1#state.nodes)
+    end.
+
+dont_increment_cycle_in_wait_state_(Module) ->
+    fun() ->
+        Nodelist = [a,b,c],
+        Epoch = 1,
+
+        State0 = #state{cycle=0, module=Module, nodes=Nodelist, epoch=Epoch},
+
+        {next_state, waiting, State1} = egossip_server:handle_info(tick, waiting, State0),
+
+        % just making sure cycle is being incremented in gossip state
+        {next_state, gossiping, State2} = egossip_server:handle_info(tick, gossiping, State0),
+
+        ?assertEqual(0, State1#state.cycle),
+        ?assertEqual(1, State2#state.cycle)
     end.
