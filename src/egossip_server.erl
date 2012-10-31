@@ -224,7 +224,7 @@ reconcile_nodes(A, B, From, Module) ->
 
     if
         A == B ->
-            union(A, B);
+            A;
         length(A) > length(B) andalso Intersection == [] ->
             union(A, [From]);
         length(A) < length(B) andalso Intersection == [] ->
