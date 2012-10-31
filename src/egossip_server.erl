@@ -150,14 +150,24 @@ handle_info({nodeup, _}, StateName, State) ->
 
 handle_info(tick, StateName, #state{module=Module} = State0) ->
     send_after(Module:gossip_freq(), tick),
+    AggregationBased = is_aggregation_protocol(Module),
 
-    {ok, State1} = case get_peer(visible) of
-        none_available ->
-            {ok, State0};
-        {ok, Node} ->
-            send_gossip(Node, push, Module:digest(), State0)
+    % aggregation protocols only use epochs and
+    % round control. epidemic protocols don't need it
+    {ok, State1} = case AggregationBased of
+        true ->
+            next_cycle(State0);
+        false ->
+            {ok, State0}
     end,
-    {next_state, StateName, State1}.
+
+    {ok, State2} = case get_peer(visible) of
+        none_available ->
+            {ok, State1};
+        {ok, Node} ->
+            send_gossip(Node, push, Module:digest(), State1)
+    end,
+    {next_state, StateName, State2}.
 
 handle_event(_Msg, StateName, State) ->
     {next_state, StateName, State}.
@@ -178,14 +188,10 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 do_gossip(Module, Token, Msg, From, State0) ->
     Exported = erlang:function_exported(Module, next(Token), 2),
-    AggregateProtocol = is_aggregation_protocol(Module),
 
     case Module:Token(Msg, From) of
         {ok, Reply} when Exported == true ->
             send_gossip(From, next(Token), Reply, State0);
-        _ when AggregateProtocol == true ->
-            % cycle ends when last message is received in gossip
-            next_cycle(State0);
         _ ->
             {ok, State0}
     end.
