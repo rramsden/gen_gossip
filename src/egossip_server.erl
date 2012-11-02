@@ -123,7 +123,7 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
     %
     case intersection(R_Nodelist, Nodelist) of
         [] ->
-            MaxWait = Module:cycles(length(Nodelist)),
+            MaxWait = Module:cycles(length(union(Nodelist, R_Nodelist))) * 2,
             {next_state, waiting, State0#state{max_wait = MaxWait, wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
             Nodelist1 = reconcile_nodes(Nodelist, R_Nodelist, From, Module),
