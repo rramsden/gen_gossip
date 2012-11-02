@@ -63,7 +63,7 @@ waiting({R_Epoch, _, _} = Msg, #state{wait_for=R_Epoch} = State) ->
     gossiping(Msg, State#state{wait_for=undefined, epoch=R_Epoch});
 waiting({R_Epoch, _, _}, #state{wait_for=Epoch} = State0)
         when R_Epoch > Epoch ->
-    % prevent a node from waiting forever
+    % if there's a larger epoch around then wait for that one
     WaitFor = R_Epoch + 1,
     {next_state, waiting, State0#state{wait_for=WaitFor}};
 waiting(_, State) ->
@@ -123,7 +123,8 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
     %
     case intersection(R_Nodelist, Nodelist) of
         [] ->
-            {next_state, waiting, State0#state{wait_for = (R_Epoch + 1)}};
+            MaxWait = Module:cycles(length(Nodelist)),
+            {next_state, waiting, State0#state{max_wait = MaxWait, wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
             Nodelist1 = reconcile_nodes(Nodelist, R_Nodelist, From, Module),
             {ok, State1} = next_round(R_Epoch, State0),
@@ -150,7 +151,7 @@ handle_info({nodeup, _}, StateName, State) ->
     % when nodes gossip with eachother
     {next_state, StateName, State};
 
-handle_info(tick, StateName, #state{module=Module} = State0) ->
+handle_info(tick, StateName, #state{max_wait=MaxWait, module=Module} = State0) ->
     send_after(Module:gossip_freq(), tick),
     AggregationBased = is_aggregation_protocol(Module),
 
@@ -169,7 +170,18 @@ handle_info(tick, StateName, #state{module=Module} = State0) ->
         {ok, Node} ->
             ?mockable( send_gossip(Node, push, Module:digest(), State1) )
     end,
-    {next_state, StateName, State2}.
+
+    % A node could end up waiting forever if its waiting on a node
+    % that crashed. To prevent this we use a counter and flip states
+    % after MAX_WAIT period.
+    case StateName == waiting of
+        true when MaxWait == 0 ->
+            {next_state, gossiping, State2};
+        true ->
+            {next_state, StateName, State2#state{max_wait=(MaxWait-1)}};
+        false ->
+            {next_state, StateName, State2}
+    end.
 
 handle_event(_Msg, StateName, State) ->
     {next_state, StateName, State}.

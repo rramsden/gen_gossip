@@ -19,7 +19,8 @@ app_test_() ->
             fun use_latest_epoch_if_nodelist_match_/1,
             fun reconciles_nodelists_/1,
             fun remove_downed_node_/1,
-            fun dont_increment_cycle_in_wait_state_/1
+            fun dont_increment_cycle_in_wait_state_/1,
+            fun dont_wait_forever_/1
             ]}.
 
 setup() ->
@@ -263,7 +264,7 @@ dont_increment_cycle_in_wait_state_(Module) ->
         Nodelist = [a,b,c],
         Epoch = 1,
 
-        State0 = #state{cycle=0, module=Module, nodes=Nodelist, epoch=Epoch},
+        State0 = #state{cycle=0, max_wait=1, module=Module, nodes=Nodelist, epoch=Epoch},
 
         {next_state, waiting, State1} = egossip_server:handle_info(tick, waiting, State0),
 
@@ -272,4 +273,17 @@ dont_increment_cycle_in_wait_state_(Module) ->
 
         ?assertEqual(0, State1#state.cycle),
         ?assertEqual(1, State2#state.cycle)
+    end.
+
+dont_wait_forever_(Module) ->
+    fun() ->
+        MaxWait = 2,
+        Nodelist = [a,b,c],
+        Epoch = 1,
+
+        State0 = #state{cycle=0, max_wait=MaxWait, module=Module, nodes=Nodelist, epoch=Epoch},
+
+        {next_state, waiting, State1} = egossip_server:handle_info(tick, waiting, State0),
+        {next_state, waiting, State2} = egossip_server:handle_info(tick, waiting, State1),
+        {next_state, gossiping, _} = egossip_server:handle_info(tick, waiting, State2)
     end.
