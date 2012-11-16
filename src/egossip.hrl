@@ -6,7 +6,8 @@
     wait_for :: integer(),
     max_wait :: integer(),
     cycle = 0,
-    module
+    module,
+    mstate
 }).
 
 -type from() :: node().
