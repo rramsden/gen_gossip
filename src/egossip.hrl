@@ -14,6 +14,8 @@
 -type token() :: atom().
 -type epoch() :: integer().
 -type message() :: {token(), term(), from()}.
+-type module_state() :: any().
+-type nodelist() :: [node()].
 
 -type handle_event_ret() :: {next_state, NextStateName :: atom(), NewStateData :: term()} |
     {next_state, NextStateName :: atom(), NewStateData :: term(),

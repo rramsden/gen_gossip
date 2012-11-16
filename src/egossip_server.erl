@@ -1,8 +1,64 @@
+%% @doc
+%% Behaviour module for egossip. To use egossip_server you will need a user module
+%% to implement it. However, you must define the following callbacks:
+%%
+%%  init(Args)
+%%    ==> {ok, State}
+%%
+%%  gossip_freq()
+%%    | Handles how frequently a gossip message is sent. Time is
+%%    | in milliseconds
+%%    ==> Integer
+%%
+%%  round_finish(NodeCount, State)
+%%    | User module is notified when a round finishes, passing
+%%    | the number of nodes that were in on the current conversation
+%%    ==> {noreply, State}
+%%
+%%  cycles(NodeCount)
+%%    | Returns the number of cycles in a round
+%%    ==> Integer
+%%
+%%  digest(State)
+%%    | Message you want to be gossiped around cluster
+%%    ==> {reply, Term, State}
+%%
+%%  join(Nodelist, State)
+%%    | Notifies callback module when the CURRENT NODE joins another cluster
+%%    ==> {noreply, State}
+%%
+%%  expire(Node, State)
+%%    | Notifies callback module when a node leaves the cluster
+%%    ==> {noreply, State}
+%%
+%%  push(Msg, From, State)
+%%    | Called when we receive a push from another node
+%%    ==> {reply, Reply, State} | {noreply, State}
+%%
+%%  symmetric_push(Msg, From, State)
+%%    | Called when we receive a symmetric_push from another node
+%%    ==> {reply, From, State} | {noreply, State}
+%%
+%%  commit(Msg, From, State)
+%%    | Called when we receive a commit from another node
+%%    ==> {noreply, State}
+%%
+%%  Gossip Communication
+%%  --------------------
+%%
+%%                   NODE A                     NODE B
+%%                send push  ---------------->  Module:push/3
+%%  Module:symmetric_push/3  <----------------  send symmetric_push
+%%              send commit  ---------------->  Module:commit/3
+%%
+%% @end
 -module(egossip_server).
 -behaviour(gen_fsm).
 
+-include("egossip.hrl").
+
 %% API
--export([start_link/1]).
+-export([start_link/1, start_link/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -14,23 +70,40 @@
          terminate/3,
          code_change/4]).
 
+-define(SERVER(Module), list_to_atom("egossip_" ++ atom_to_list(Module))).
+-define(TRY(Code), (catch begin Code end)).
+
 -ifdef(TEST).
--export([reconcile_nodes/4, send_gossip/4, can_gossip/1, reset_gossip/1]).
+-export([reconcile_nodes/4, send_gossip/4]).
 -define(mockable(Fun), ?MODULE:Fun).
 -else.
 -define(mockable(Fun), Fun).
 -endif.
 
--include("egossip.hrl").
-
-% debug
--define(RECHECK, 5).
--define(SERVER(Module), list_to_atom("egossip_" ++ atom_to_list(Module))).
--define(TRY(Code), (catch begin Code end)).
-
 %%%===================================================================
 %%% API
 %%%===================================================================
+
+-callback init(Args :: [any()]) ->
+    {ok, module_state()}.
+-callback gossip_freq() ->
+    Tick :: pos_integer().
+-callback round_finish(NodeCount :: pos_integer(), module_state()) ->
+    {noreply, module_state()}.
+-callback cycles(NodeCount :: pos_integer()) ->
+    Cycles :: pos_integer().
+-callback digest(State :: any()) ->
+    {reply, Reply :: any(), module_state()}.
+-callback join(nodelist(), module_state()) ->
+    {noreply, module_state()}.
+-callback expire(node(), module_state()) ->
+    {noreply, module_state()}.
+-callback push(Msg :: any(), From :: node(), module_state()) ->
+    {reply, Reply :: any(), module_state()} | {noreply, module_state()}.
+-callback symmetric_push(Msg :: any(), From :: node(), module_state()) ->
+    {reply, Reply :: any(), module_state()} | {noreply, module_state()}.
+-callback commit(Msg :: any(), From :: node(), module_state()) ->
+    {noreply, module_state()}.
 
 %% @doc
 %% Starts egossip server with registered handler module
@@ -40,16 +113,24 @@
     Error :: {already_started, Pid} | term().
 
 start_link(Module) ->
-    gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module], []).
+    start_link(Module, []).
+
+-spec start_link(module(), Args :: [any()]) -> {ok,Pid} | ignore | {error,Error} when
+    Pid :: pid(),
+    Error :: {already_started, Pid} | term().
+
+start_link(Module, Args) ->
+    gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module, Args], []).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Module]) ->
+init([Module, Args]) ->
     send_after(Module:gossip_freq(), tick),
     net_kernel:monitor_nodes(true),
-    {ok, gossiping, reset_gossip(#state{module=Module})}.
+    {ok, State} = Module:init(Args),
+    {ok, gossiping, #state{module=Module, mstate=State}}.
 
 %% @doc
 %% A node will transition into waiting state if there exists
@@ -126,49 +207,41 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
             MaxWait = Module:cycles(length(union(Nodelist, R_Nodelist))) * 2,
             {next_state, waiting, State0#state{max_wait = MaxWait, wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
-            Nodelist1 = reconcile_nodes(Nodelist, R_Nodelist, From, Module),
             {ok, State1} = next_round(R_Epoch, State0),
-            {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
-            {next_state, gossiping, State2#state{nodes=Nodelist1}}
+            {ok, State2} = reconcile_nodes(Nodelist, R_Nodelist, From, State1),
+            {ok, State3} = do_gossip(Module, Token, Msg, From, State2),
+            {next_state, gossiping, State3}
     end;
 % 4.
 gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
         #state{module=Module, nodes=Nodelist, epoch=Epoch} = State0)
         when R_Nodelist =/= Nodelist ->
-    Nodelist1 = reconcile_nodes(Nodelist, R_Nodelist, From, State0#state.module),
-    {ok, State1} = do_gossip(Module, Token, Msg, From, State0),
-    {next_state, gossiping, State1#state{nodes=Nodelist1}};
-gossiping(_, State) ->
+    {ok, State1} = reconcile_nodes(Nodelist, R_Nodelist, From, State0),
+    {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
+    {next_state, gossiping, State2};
+gossiping({_, _, _}, State) ->
     {next_state, gossiping, State}.
 
-handle_info({nodedown, Node}, StateName, #state{module=Module} = State) ->
+handle_info({nodedown, Node}, StateName, #state{mstate=MState0, module=Module} = State) ->
     NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodes),
-    ?TRY(Module:expire(Node)),
-    {next_state, StateName, State#state{nodes=NodesLeft}};
+    {noreply, MState1} = Module:expire(Node, MState0),
+    {next_state, StateName, State#state{nodes=NodesLeft, mstate=MState1}};
 
 handle_info({nodeup, _}, StateName, State) ->
     % don't care about when a node is up, this is handled
     % when nodes gossip with eachother
     {next_state, StateName, State};
 
-handle_info(tick, StateName, #state{max_wait=MaxWait, module=Module} = State0) ->
+handle_info(tick, StateName, #state{max_wait=MaxWait,
+                                    mstate=MState0, module=Module} = State0) ->
     send_after(Module:gossip_freq(), tick),
-    AggregationBased = is_aggregation_protocol(Module),
 
-    % aggregation protocols only use epochs and
-    % round control. epidemic protocols don't need it
-    {ok, State1} = case AggregationBased of
-        true when StateName =/= waiting ->
-            next_cycle(State0);
-        _ ->
-            {ok, State0}
-    end,
-
-    {ok, State2} = case get_peer(visible) of
+    {ok, State1} = case get_peer(visible) of
         none_available ->
-            {ok, State1};
+            {ok, State0};
         {ok, Node} ->
-            ?mockable( send_gossip(Node, push, Module:digest(), State1) )
+            {reply, Digest, MState1} = Module:digest(MState0),
+            ?mockable( send_gossip(Node, push, Digest, State0#state{mstate=MState1}) )
     end,
 
     % A node could end up waiting forever if its waiting on a node
@@ -176,10 +249,11 @@ handle_info(tick, StateName, #state{max_wait=MaxWait, module=Module} = State0) -
     % after MAX_WAIT period.
     case StateName == waiting of
         true when MaxWait == 0 ->
-            {next_state, gossiping, State2};
+            {next_state, gossiping, State1};
         true ->
-            {next_state, StateName, State2#state{max_wait=(MaxWait-1)}};
+            {next_state, StateName, State1#state{max_wait=(MaxWait-1)}};
         false ->
+            {ok, State2} = next_cycle(State1),
             {next_state, StateName, State2}
     end.
 
@@ -200,14 +274,12 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-do_gossip(Module, Token, Msg, From, State0) ->
-    Exported = erlang:function_exported(Module, next(Token), 2),
-
-    case Module:Token(Msg, From) of
-        {ok, Reply} when Exported == true ->
-            ?mockable( send_gossip(From, next(Token), Reply, State0) );
-        _ ->
-            {ok, State0}
+do_gossip(Module, Token, Msg, From, #state{mstate=MState0} = State0) ->
+    case Module:Token(Msg, From, MState0) of
+        {reply, Reply, MState1} ->
+            ?mockable( send_gossip(From, next(Token), Reply, State0#state{mstate=MState1}) );
+        {noreply, MState1} ->
+            {ok, State0#state{mstate=MState1}}
     end.
 
 next(push) -> symmetric_push;
@@ -220,17 +292,15 @@ next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodes=Nodes} = State0
 
     case NextCycle > Module:cycles(NodeCount) of
         true ->
-            NextEpoch = Epoch + 1,
-            next_round(NextEpoch, State0);
+            next_round(Epoch + 1, State0);
         false ->
             {ok, State0#state{cycle=NextCycle}}
     end.
 
-next_round(N, State) ->
-    Module = State#state.module,
+next_round(N, #state{module=Module, mstate=MState0} = State) ->
     NodeCount = length(State#state.nodes),
-    ?TRY(Module:round_finish(NodeCount)),
-    {ok, State#state{epoch=N, cycle=0}}.
+    {noreply, MState1} = Module:round_finish(NodeCount, MState0),
+    {ok, State#state{epoch=N, cycle=0, mstate=MState1}}.
 
 %% @doc
 %% This handles cluster membership. We don't use the ErlangVM
@@ -239,28 +309,30 @@ next_round(N, State) ->
 %% from converging. If nodes are continuously joining a conversation
 %% will never converge on an answer.
 %% @end
-reconcile_nodes(A, B, From, Module) ->
+reconcile_nodes(A, B, From, #state{mstate=MState0, module=Module} = State) ->
     Intersection = intersection(A, B),
 
-    if
+    {Nodes, MState2} = if
         A == B ->
-            A;
+            {A, MState0};
         length(A) > length(B) andalso Intersection == [] ->
-            union(A, [From]);
+            {union(A, [From]), MState0};
         length(A) < length(B) andalso Intersection == [] ->
-            ?TRY(Module:join(B)),
-            union(B, [node_name()]);
+            {noreply, MState1} = Module:join(B, MState0),
+            {union(B, [node_name()]), MState1};
         length(Intersection) == 1 andalso length(B) > length(A) ->
-            ?TRY(Module:join(B -- A)),
-            union(B, [node_name()]);
+            {noreply, MState1} = Module:join(B -- A, MState0),
+            {union(B, [node_name()]), MState1};
         length(Intersection) > 0 ->
-            union(A, B);
+            {union(A, B), MState0};
         A < B ->
-            ?TRY(Module:join(B)),
-            union(B, [node_name()]);
+            {noreply, MState1} = Module:join(B, MState0),
+            {union(B, [node_name()]), MState1};
         true ->
-            union(A, [From])
-    end.
+            {union(A, [From]), MState0}
+    end,
+
+    {ok, State#state{mstate=MState2, nodes=Nodes}}.
 
 -ifdef(TEST).
 node_name() -> a.
@@ -283,46 +355,10 @@ send_after({Num,Sec}, Message) ->
 send_after(After, Message) ->
     erlang:send_after(After, self(), Message).
 
-% if we implement an aggregation based protocol only
-% count push when checking can_gossip/1
-can_gossip(push, State) ->
-    can_gossip(State);
-can_gossip(_, State) ->
-    case is_aggregation_protocol(State#state.module) of
-        true -> {true, State};
-        false -> can_gossip(State)
-    end.
-
-can_gossip(#state{ cgossip={CM, CT}, mgossip={MM, MT} } = State) when CT < MT ->
-    {CM < MM, State#state{ cgossip={CM+1, os:timestamp()} }};
-
-can_gossip(State0) ->
-    can_gossip(reset_gossip(State0)).
-
-reset_gossip(#state{module=Module} = State0) ->
-    case Module:gossip_freq() of
-        never ->
-            #state{ cgossip={CM, {Mega, Sec, Micro}} } = State0,
-            State0#state{ mgossip={CM, {Mega, Sec + ?RECHECK, Micro}} };
-        {Num, InSec} ->
-            Now = {Mega, Sec, Micro} = os:timestamp(),
-            Expire = {Mega, Sec + InSec, Micro},
-            State0#state{ cgossip={0, Now}, mgossip={Num, Expire} }
-    end.
-
-send_gossip(ToNode, Token, Data, #state{module=Module, nodes=Nodes} = State0) ->
-    {CanSend, State1} = can_gossip(Token, State0),
-    case CanSend of
-        false ->
-            {ok, State1};
-        true ->
-            Epoch = State0#state.epoch,
-            gen_fsm:send_event({?SERVER(Module), ToNode}, {Epoch, {Token, Data, node()}, Nodes}),
-            {ok, State1}
-    end.
-
-is_aggregation_protocol(Module) ->
-    erlang:function_exported(Module, cycles, 1).
+send_gossip(ToNode, Token, Message, #state{module=Module, nodes=Nodelist} = State0) ->
+    Payload = {State0#state.epoch, {Token, Message, node()}, Nodelist},
+    gen_fsm:send_event({?SERVER(Module), ToNode}, Payload),
+    {ok, State0}.
 
 union(L1, L2) ->
     sets:to_list(sets:union(sets:from_list(L1), sets:from_list(L2))).

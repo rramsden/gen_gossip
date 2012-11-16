@@ -7,6 +7,5 @@
                   kernel,
                   stdlib
                  ]},
-  {mod, { egossip_app, []}},
   {env, []}
  ]}.
