@@ -1,6 +1,27 @@
 %% @doc
-%% Behaviour module for egossip. To use egossip_server you will need a user module
-%% to implement it. However, you must define the following callbacks:
+%% Behaviour module for egossip. egossip_server must be implemented by
+%% the user. There's two modes for gossiping: aggregate and epidemic.
+%%
+%% Aggregation Protocols
+%% ---------------------
+%%
+%% These protocols you want to converge at some point before reseting the round.
+%% They will prevent other nodes from joining a round in progress. They do
+%% this by keeping an ever increasing epoch counter which acts as a version number.
+%% If two versions don't match up then nodes will not gossip with eachother. Lower
+%% epoch nodes will wait to join higher epochs when the next round occurs.
+%%
+%% Epidemic Protocols
+%% ------------------
+%%
+%% These don't have any kind of versioning; all nodes will always be able to
+%% gossip with eachother.
+%%
+%% Implementing a module
+%% ---------------------
+%%
+%% To use egossip_server you will need a user module
+%% to implement it. You must define the following callbacks:
 %%
 %%  init(Args)
 %%    ==> {ok, State}
@@ -16,7 +37,8 @@
 %%    ==> {noreply, State}
 %%
 %%  cycles(NodeCount)
-%%    | Returns the number of cycles in a round
+%%    | You don't need to implement this if your building using epidemic mode.
+%%    | This returns the number of cycles in each round needed for aggregation mode.
 %%    ==> Integer
 %%
 %%  digest(State)
@@ -58,7 +80,7 @@
 -include("egossip.hrl").
 
 %% API
--export([start_link/1, start_link/2]).
+-export([start_link/3]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -108,29 +130,24 @@
 %% @doc
 %% Starts egossip server with registered handler module
 %% @end
--spec start_link(module()) -> {ok,Pid} | ignore | {error,Error} when
-    Pid :: pid(),
-    Error :: {already_started, Pid} | term().
 
-start_link(Module) ->
-    start_link(Module, []).
-
--spec start_link(module(), Args :: [any()]) -> {ok,Pid} | ignore | {error,Error} when
-    Pid :: pid(),
-    Error :: {already_started, Pid} | term().
-
-start_link(Module, Args) ->
-    gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module, Args], []).
+start_link(Module, Args, Mode) ->
+    case lists:member(Mode, [aggregate, epidemic]) of
+        true ->
+            gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module, Args, Mode], []);
+        false ->
+            {error, invalid_mode}
+    end.
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-init([Module, Args]) ->
+init([Module, Args, Mode]) ->
     send_after(Module:gossip_freq(), tick),
     net_kernel:monitor_nodes(true),
     {ok, State} = Module:init(Args),
-    {ok, gossiping, #state{module=Module, mstate=State}}.
+    {ok, gossiping, #state{module=Module, mode=Mode, mstate=State}}.
 
 %% @doc
 %% A node will transition into waiting state if there exists
@@ -204,7 +221,11 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
     %
     case intersection(R_Nodelist, Nodelist) of
         [] ->
-            MaxWait = Module:cycles(length(union(Nodelist, R_Nodelist))) * 2,
+            % wait twice the amount of cycles for nodes to join each other.
+            % we do this because if the node we're waiting on crashes
+            % we could end up waiting forever.
+            MergedList = union(Nodelist, R_Nodelist),
+            MaxWait = Module:cycles(MergedList) * 2,
             {next_state, waiting, State0#state{max_wait = MaxWait, wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
             {ok, State1} = next_round(R_Epoch, State0),
@@ -244,17 +265,15 @@ handle_info(tick, StateName, #state{max_wait=MaxWait,
             ?mockable( send_gossip(Node, push, Digest, State0#state{mstate=MState1}) )
     end,
 
-    % A node could end up waiting forever if its waiting on a node
-    % that crashed. To prevent this we use a counter and flip states
-    % after MAX_WAIT period.
-    case StateName == waiting of
-        true when MaxWait == 0 ->
-            {next_state, gossiping, State1};
+    % The MAX_WAIT counter is positive we're waiting to join a cluster.
+    % the reason we set this is because a node could end up waiting forever
+    % if the node it was waiting on crashed.
+    case State1#state.max_wait == 0 of
         true ->
-            {next_state, StateName, State1#state{max_wait=(MaxWait-1)}};
-        false ->
             {ok, State2} = next_cycle(State1),
-            {next_state, StateName, State2}
+            {next_state, gossiping, State2};
+        false ->
+            {next_state, StateName, State1#state{max_wait=(MaxWait-1)}}
     end.
 
 handle_event(_Msg, StateName, State) ->
@@ -286,6 +305,8 @@ next(push) -> symmetric_push;
 next(symmetric_push) -> commit;
 next(_) -> undefined.
 
+next_cycle(#state{mode=Mode} = State) when Mode =/= aggregate ->
+    {ok, State};
 next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodes=Nodes} = State0) ->
     NextCycle = Cycle + 1,
     NodeCount = length(Nodes),

@@ -38,7 +38,7 @@
 %%%===================================================================
 
 start_link(Number) ->
-    egossip_server:start_link(?MODULE, [Number]).
+    egossip_server:start_link(?MODULE, [Number],  aggregate).
 
 %%%===================================================================
 %%% egossip callbacks
@@ -48,7 +48,8 @@ init([Number]) ->
     {ok, #state{value=Number}}.
 
 % @doc
-% Defines how frequently we want to tick.
+% Defines how frequently we want to send a gossip message.
+% In milliseconds.
 % @end
 gossip_freq() ->
     1000.

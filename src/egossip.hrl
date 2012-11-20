@@ -7,7 +7,8 @@
     max_wait :: integer(),
     cycle = 0,
     module,
-    mstate
+    mstate,
+    mode = epidemic
 }).
 
 -type from() :: node().
