@@ -31,16 +31,6 @@
 %%    | in milliseconds
 %%    ==> Integer
 %%
-%%  round_finish(NodeCount, State)
-%%    | User module is notified when a round finishes, passing
-%%    | the number of nodes that were in on the current conversation
-%%    ==> {noreply, State}
-%%
-%%  cycles(NodeCount)
-%%    | You don't need to implement this if your building using epidemic mode.
-%%    | This returns the number of cycles in each round needed for aggregation mode.
-%%    ==> Integer
-%%
 %%  digest(State)
 %%    | Message you want to be gossiped around cluster
 %%    ==> {reply, Term, State}
@@ -64,6 +54,19 @@
 %%  commit(Msg, From, State)
 %%    | Called when we receive a commit from another node
 %%    ==> {noreply, State}
+%%
+%%  AGGREGATION CALLBACKS
+%%
+%%  round_finish(NodeCount, State)
+%%    | User module is notified when a round finishes, passing
+%%    | the number of nodes that were in on the current conversation
+%%    ==> {noreply, State}
+%%
+%%  cycles(NodeCount)
+%%    | You don't need to implement this if your building using epidemic mode.
+%%    | This returns the number of cycles in each round needed for aggregation mode.
+%%    ==> Integer
+%%
 %%
 %%  Gossip Communication
 %%  --------------------
@@ -110,10 +113,6 @@
     {ok, module_state()}.
 -callback gossip_freq() ->
     Tick :: pos_integer().
--callback round_finish(NodeCount :: pos_integer(), module_state()) ->
-    {noreply, module_state()}.
--callback cycles(NodeCount :: pos_integer()) ->
-    Cycles :: pos_integer().
 -callback digest(State :: any()) ->
     {reply, Reply :: any(), module_state()}.
 -callback join(nodelist(), module_state()) ->

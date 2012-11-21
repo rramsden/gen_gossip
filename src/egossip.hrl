@@ -3,8 +3,8 @@
     mgossip = {1, {1,1,1}}, % max gossip count
     nodes = [node()], % list of nodes and their respective epochs
     epoch = 0,
-    wait_for :: integer(),
-    max_wait :: integer(),
+    wait_for :: integer(), % set to epoch we're waiting for
+    max_wait = 0,
     cycle = 0,
     module,
     mstate,
