@@ -175,7 +175,7 @@ waiting(_, State) ->
 %%       - gossip
 %% 2. (epoch_remote > epoch_local)
 %%       - use higher epoch, gossip
-%% 3. (epoch_remote > epoch_local)
+%% 3. (epoch_remote > epoch_local) and nodelists don't match
 %%       if intersection non-empty
 %%         - merge lists, goto #2
 %%       else
@@ -208,7 +208,7 @@ gossiping({R_Epoch, {Token, Msg, From}, Nodelist},
 % 3.
 gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
         #state{epoch=Epoch, module=Module, nodes=Nodelist} = State0)
-        when R_Epoch > Epoch ->
+        when R_Epoch > Epoch, R_Nodelist =/= Nodelist ->
     % The intersection is taken to prevent nodes from waiting twice
     % to enter into the next epoch. This happens when islands
     % are trying to join. For example:
