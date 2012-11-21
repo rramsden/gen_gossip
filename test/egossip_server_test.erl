@@ -204,10 +204,10 @@ dont_increment_cycle_in_wait_state_(Module) ->
 
         State0 = #state{mode=aggregate, cycle=0, max_wait=1, module=Module, nodes=Nodelist, epoch=Epoch},
 
-        {next_state, waiting, State1} = egossip_server:handle_info(tick, waiting, State0),
+        {next_state, waiting, State1} = egossip_server:handle_info('$egossip_tick', waiting, State0),
 
         % just making sure cycle is being incremented in gossip state
-        {next_state, gossiping, State2} = egossip_server:handle_info(tick, gossiping, State0#state{max_wait=0}),
+        {next_state, gossiping, State2} = egossip_server:handle_info('$egossip_tick', gossiping, State0#state{max_wait=0}),
 
         ?assertEqual(0, State1#state.cycle),
         ?assertEqual(1, State2#state.cycle)
@@ -222,10 +222,10 @@ dont_increment_cycle_for_other_modes_(Module) ->
 
         State0 = #state{mode=epidemic, cycle=0, max_wait=0, module=Module, nodes=Nodelist, epoch=Epoch},
 
-        {next_state, gossiping, State1} = egossip_server:handle_info(tick, waiting, State0),
+        {next_state, gossiping, State1} = egossip_server:handle_info('$egossip_tick', waiting, State0),
 
         % just making sure cycle is being incremented in gossip state
-        {next_state, gossiping, State2} = egossip_server:handle_info(tick, gossiping, State0),
+        {next_state, gossiping, State2} = egossip_server:handle_info('$egossip_tick', gossiping, State0),
 
         ?assertEqual(0, State1#state.cycle),
         ?assertEqual(0, State2#state.cycle)
@@ -239,7 +239,7 @@ dont_wait_forever_(Module) ->
 
         State0 = #state{cycle=0, max_wait=MaxWait, module=Module, nodes=Nodelist, epoch=Epoch},
 
-        {next_state, waiting, State1} = egossip_server:handle_info(tick, waiting, State0),
-        {next_state, waiting, State2} = egossip_server:handle_info(tick, waiting, State1),
-        {next_state, gossiping, _} = egossip_server:handle_info(tick, waiting, State2)
+        {next_state, waiting, State1} = egossip_server:handle_info('$egossip_tick', waiting, State0),
+        {next_state, waiting, State2} = egossip_server:handle_info('$egossip_tick', waiting, State1),
+        {next_state, gossiping, _} = egossip_server:handle_info('$egossip_tick', waiting, State2)
     end.
