@@ -32,9 +32,9 @@ setup() ->
     meck:expect(Module, round_finish, 2, {noreply, state}),
     meck:expect(Module, cycles, 1, 10),
     meck:expect(Module, digest, 1, {reply, digest, state}),
-    meck:expect(Module, push, 3, {reply, digest, state}),
-    meck:expect(Module, symmetric_push, 3, {reply, digest, state}),
-    meck:expect(Module, commit, 3, {reply, digest, state}),
+    meck:expect(Module, handle_push, 3, {reply, digest, state}),
+    meck:expect(Module, handle_pull, 3, {reply, digest, state}),
+    meck:expect(Module, handle_commit, 3, {reply, digest, state}),
     meck:expect(Module, join, 2, {noreply, state}),
     meck:expect(Module, expire, 2, {noreply, state}),
     Module.
@@ -84,7 +84,7 @@ prevent_forever_wait_(Module) ->
         Nodelist = [a],
 
         State0 = #state{module=Module, wait_for=WaitFor, nodes=Nodelist},
-        Send = {R_Epoch, {push, msg, from}, R_Nodelist},
+        Send = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
         {next_state, waiting, State1} = egossip_server:waiting(Send, State0),
 
@@ -101,7 +101,7 @@ transition_wait_to_gossip_state_(Module) ->
         Nodelist = [a],
 
         State0 = #state{module=Module, wait_for=Epoch, nodes=Nodelist},
-        Msg = {R_Epoch, {push, msg, from}, R_Nodelist},
+        Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
         {next_state, gossiping, _} = egossip_server:waiting(Msg, State0)
     end.
@@ -114,7 +114,7 @@ transition_gossip_to_wait_state_(Module) ->
         Nodelist = [a],
 
         State0 = #state{module=Module, nodes=Nodelist, epoch=Epoch},
-        Msg = {R_Epoch, {push, msg, from}, R_Nodelist},
+        Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
         {next_state, waiting, _} = egossip_server:gossiping(Msg, State0)
     end.
@@ -127,13 +127,13 @@ gossips_if_nodelist_and_epoch_match_(Module) ->
         Nodelist = [a,b],
 
         State0 = #state{mstate=state, module=Module, nodes=Nodelist, epoch=Epoch},
-        Msg = {R_Epoch, {push, msg, from}, R_Nodelist},
+        Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
         {next_state, gossiping, _} = egossip_server:gossiping(Msg, State0),
 
-        % some data was pushed to the module, so it should reply with a symmetric_push
-        ?assert( meck:called(Module, push, [ msg, from, state ]) ),
-        ?assert( meck:called(egossip_server, send_gossip, [from, symmetric_push, digest, State0]) )
+        % some data was pushed to the module, so it should reply with a handle_pull
+        ?assert( meck:called(Module, handle_push, [ msg, from, state ]) ),
+        ?assert( meck:called(egossip_server, send_gossip, [from, handle_pull, digest, State0]) )
     end.
 
 use_latest_epoch_if_nodelist_match_(Module) ->
@@ -147,12 +147,12 @@ use_latest_epoch_if_nodelist_match_(Module) ->
         Nodelist = [a,b],
 
         State0 = #state{module=Module, nodes=Nodelist, epoch=Epoch},
-        Send = {R_Epoch, {push, msg, from}, R_Nodelist},
+        Send = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
         {next_state, gossiping, State1} = egossip_server:gossiping(Send, State0),
 
         % should also send a gossip message back
-        ?assert( meck:called(egossip_server, send_gossip, [from, symmetric_push, digest, State1]) ),
+        ?assert( meck:called(egossip_server, send_gossip, [from, handle_pull, digest, State1]) ),
         ?assertEqual(State1#state.epoch, R_Epoch)
     end.
 
@@ -167,7 +167,7 @@ reconciles_nodelists_(Module) ->
         NodelistA = [a,c],
 
         StateA0 = #state{module=Module, nodes=NodelistA, epoch=EpochA},
-        SendA = {R_EpochA, {push, msg, from}, R_NodelistA},
+        SendA = {R_EpochA, {handle_push, msg, from}, R_NodelistA},
 
         {next_state, gossiping, StateA1} = egossip_server:gossiping(SendA, StateA0),
 
@@ -179,7 +179,7 @@ reconciles_nodelists_(Module) ->
         NodelistB = [a],
 
         StateB0 = #state{module=Module, nodes=NodelistB, epoch=EpochB},
-        SendB = {R_EpochB, {push, msg, from}, R_NodelistB},
+        SendB = {R_EpochB, {handle_push, msg, from}, R_NodelistB},
 
         {next_state, gossiping, StateB1} = egossip_server:gossiping(SendB, StateB0),
 

@@ -19,9 +19,9 @@
          digest/1,
          join/2,
          expire/2,
-         symmetric_push/3,
-         push/3,
-         commit/3]).
+         handle_pull/3,
+         handle_push/3,
+         handle_commit/3]).
 
 -record(state, {
     epoch = 0
@@ -52,17 +52,17 @@ digest(#state{epoch=Epoch0} = State) ->
     {reply, State#state.epoch, State#state{epoch=Epoch1}}.
 
 % received a push
-push(Epoch, _From, State) when Epoch >= State#state.epoch ->
+handle_push(Epoch, _From, State) when Epoch >= State#state.epoch ->
     {noreply, State#state{epoch=Epoch}};
-push(_Epoch, _From, State) ->
+handle_push(_Epoch, _From, State) ->
     {reply, State#state.epoch, State}.
 
 % received a symmetric push
-symmetric_push(Epoch, _From, State) ->
+handle_pull(Epoch, _From, State) ->
     {noreply, State#state{epoch=Epoch}}.
 
 % received a commit
-commit(_, _, State) ->
+handle_commit(_, _, State) ->
     {noreply, State}.
 
 % joined cluster

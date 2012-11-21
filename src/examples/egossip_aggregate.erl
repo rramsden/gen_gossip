@@ -26,9 +26,9 @@
          digest/1,
          join/2,
          expire/2,
-         symmetric_push/3,
-         push/3,
-         commit/3]).
+         handle_push/3,
+         handle_pull/3,
+         handle_commit/3]).
 
 -record(state, {
     value = 0
@@ -70,20 +70,20 @@ digest(State) ->
     {reply, State#state.value, State}.
 
 % Callback giving you another nodes digest
-push(Value, _From, State) ->
+handle_push(Value, _From, State) ->
     io:format("got push~n"),
     NewValue = (Value + State#state.value) / 2,
     {reply, State#state.value, State#state{value=NewValue}}.
 
 % Callback triggered on the node that initiated
 % the gossip
-symmetric_push(Value, _From, State) ->
+handle_pull(Value, _From, State) ->
     io:format("got sym push~n"),
     NewValue = (Value + State#state.value) / 2,
     {noreply, State#state{value=NewValue}}.
 
 % Doesn't get called in this example
-commit(_, _, State) ->
+handle_commit(_, _, State) ->
     {noreply, State}.
 
 % Callback triggered when you join a cluster of nodes

@@ -43,15 +43,15 @@
 %%    | Notifies callback module when a node leaves the cluster
 %%    ==> {noreply, State}
 %%
-%%  push(Msg, From, State)
+%%  handle_push(Msg, From, State)
 %%    | Called when we receive a push from another node
 %%    ==> {reply, Reply, State} | {noreply, State}
 %%
-%%  symmetric_push(Msg, From, State)
-%%    | Called when we receive a symmetric_push from another node
+%%  handle_pull(Msg, From, State)
+%%    | Called when we receive a pull from another node
 %%    ==> {reply, From, State} | {noreply, State}
 %%
-%%  commit(Msg, From, State)
+%%  handle_commit(Msg, From, State)
 %%    | Called when we receive a commit from another node
 %%    ==> {noreply, State}
 %%
@@ -73,7 +73,7 @@
 %%
 %%                   NODE A                     NODE B
 %%                send push  ---------------->  Module:push/3
-%%  Module:symmetric_push/3  <----------------  send symmetric_push
+%%     Module:handle_pull/3  <----------------  send pull
 %%              send commit  ---------------->  Module:commit/3
 %%
 %% @end
@@ -119,11 +119,11 @@
     {noreply, module_state()}.
 -callback expire(node(), module_state()) ->
     {noreply, module_state()}.
--callback push(Msg :: any(), From :: node(), module_state()) ->
+-callback handle_push(Msg :: any(), From :: node(), module_state()) ->
     {reply, Reply :: any(), module_state()} | {noreply, module_state()}.
--callback symmetric_push(Msg :: any(), From :: node(), module_state()) ->
+-callback handle_pull(Msg :: any(), From :: node(), module_state()) ->
     {reply, Reply :: any(), module_state()} | {noreply, module_state()}.
--callback commit(Msg :: any(), From :: node(), module_state()) ->
+-callback handle_commit(Msg :: any(), From :: node(), module_state()) ->
     {noreply, module_state()}.
 
 %% @doc
@@ -261,7 +261,7 @@ handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
             {ok, State0};
         {ok, Node} ->
             {reply, Digest, MState1} = Module:digest(MState0),
-            ?mockable( send_gossip(Node, push, Digest, State0#state{mstate=MState1}) )
+            ?mockable( send_gossip(Node, handle_push, Digest, State0#state{mstate=MState1}) )
     end,
 
     % The MAX_WAIT counter is positive we're waiting to join a cluster.
@@ -305,8 +305,8 @@ do_gossip(Module, Token, Msg, From, #state{mstate=MState0} = State0) ->
             {ok, State0#state{mstate=MState1}}
     end.
 
-next(push) -> symmetric_push;
-next(symmetric_push) -> commit;
+next(handle_push) -> handle_pull;
+next(handle_pull) -> handle_commit;
 next(_) -> undefined.
 
 next_cycle(#state{mode=Mode} = State) when Mode =/= aggregate ->
