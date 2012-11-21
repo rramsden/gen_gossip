@@ -157,7 +157,7 @@ init([Module, Args, Mode]) ->
 -spec waiting({epoch(), message(), [node()]}, StateData :: term()) -> handle_event_ret().
 
 waiting({R_Epoch, _, _} = Msg, #state{wait_for=R_Epoch} = State) ->
-    gossiping(Msg, State#state{wait_for=undefined, epoch=R_Epoch});
+    gossiping(Msg, State#state{wait_for=undefined, max_wait=0, epoch=R_Epoch});
 waiting({R_Epoch, _, _}, #state{wait_for=Epoch} = State0)
         when R_Epoch > Epoch ->
     % if there's a larger epoch around then wait for that one
@@ -267,12 +267,17 @@ handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
     % The MAX_WAIT counter is positive we're waiting to join a cluster.
     % the reason we set this is because a node could end up waiting forever
     % if the node it was waiting on crashed.
-    case State1#state.max_wait == 0 of
+    case StateName == gossiping of
         true ->
             {ok, State2} = next_cycle(State1),
             {next_state, gossiping, State2};
         false ->
-            {next_state, StateName, State1#state{max_wait=(MaxWait-1)}}
+            case State1#state.max_wait == 0 of
+                true ->
+                    {next_state, gossiping, State1};
+                false ->
+                    {next_state, waiting, State1#state{max_wait=(MaxWait-1)}}
+            end
     end.
 
 handle_event(_Msg, StateName, State) ->
