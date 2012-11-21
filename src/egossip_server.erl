@@ -252,9 +252,9 @@ handle_info({nodeup, _}, StateName, State) ->
     % when nodes gossip with eachother
     {next_state, StateName, State};
 
-handle_info(tick, StateName, #state{max_wait=MaxWait,
+handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
                                     mstate=MState0, module=Module} = State0) ->
-    send_after(Module:gossip_freq(), tick),
+    send_after(Module:gossip_freq(), '$egossip_tick'),
 
     {ok, State1} = case get_peer(visible) of
         none_available ->
