@@ -223,8 +223,8 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
             % wait twice the amount of cycles for nodes to join each other.
             % we do this because if the node we're waiting on crashes
             % we could end up waiting forever.
-            MergedList = union(Nodelist, R_Nodelist),
-            MaxWait = Module:cycles(MergedList) * 2,
+            ClusterSize = length(union(Nodelist, R_Nodelist)),
+            MaxWait = Module:cycles(ClusterSize) * 2,
             {next_state, waiting, State0#state{max_wait = MaxWait, wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
             {ok, State1} = next_round(R_Epoch, State0),
