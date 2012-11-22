@@ -201,7 +201,7 @@ gossiping({R_Epoch, {Token, Msg, From}, Nodelist},
     % clock-drift between nodes. You'll never have everything perfectly in-sync
     % unless your Google and have atomic GPS clocks... To keep up with the highest
     % epoch we simply set our epoch to the new value keeping things in-sync.
-    {ok, State1} = next_round(R_Epoch, State0),
+    {ok, State1} = set_round(R_Epoch, State0),
     {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
     {next_state, gossiping, State2};
 
@@ -227,7 +227,7 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
             MaxWait = Module:cycles(ClusterSize) * 2,
             {next_state, waiting, State0#state{max_wait = MaxWait, wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
-            {ok, State1} = next_round(R_Epoch, State0),
+            {ok, State1} = set_round(R_Epoch, State0),
             {ok, State2} = reconcile_nodes(Nodelist, R_Nodelist, From, State1),
             {ok, State3} = do_gossip(Module, Token, Msg, From, State2),
             {next_state, gossiping, State3}
@@ -316,12 +316,12 @@ next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodes=Nodes} = State0
 
     case NextCycle > Module:cycles(NodeCount) of
         true ->
-            next_round(Epoch + 1, State0);
+            set_round(Epoch + 1, State0);
         false ->
             {ok, State0#state{cycle=NextCycle}}
     end.
 
-next_round(N, #state{module=Module, mstate=MState0} = State) ->
+set_round(N, #state{module=Module, mstate=MState0} = State) ->
     NodeCount = length(State#state.nodes),
     {noreply, MState1} = Module:round_finish(NodeCount, MState0),
     {ok, State#state{epoch=N, cycle=0, mstate=MState1}}.
