@@ -143,7 +143,7 @@ start_link(Module, Args, Mode) ->
 %%%===================================================================
 
 init([Module, Args, Mode]) ->
-    send_after(Module:gossip_freq(), tick),
+    send_after(Module:gossip_freq(), '$egossip_tick'),
     net_kernel:monitor_nodes(true),
     {ok, State} = Module:init(Args),
     {ok, gossiping, #state{module=Module, mode=Mode, mstate=State}}.
