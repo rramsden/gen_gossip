@@ -72,9 +72,9 @@
 %%  --------------------
 %%
 %%                   NODE A                     NODE B
-%%                send push  ---------------->  Module:push/3
+%%                send push  ---------------->  Module:handle_push/3
 %%     Module:handle_pull/3  <----------------  send pull
-%%              send commit  ---------------->  Module:commit/3
+%%              send commit  ---------------->  Module:handle_commit/3
 %%
 %% @end
 -module(egossip_server).
