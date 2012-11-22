@@ -83,7 +83,7 @@
 -include("egossip.hrl").
 
 %% API
--export([start_link/3]).
+-export([register_handler/3]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -130,7 +130,7 @@
 %% Starts egossip server with registered handler module
 %% @end
 
-start_link(Module, Args, Mode) ->
+register_handler(Module, Args, Mode) ->
     case lists:member(Mode, [aggregate, epidemic]) of
         true ->
             gen_fsm:start_link({local, ?SERVER(Module)}, ?MODULE, [Module, Args, Mode], []);

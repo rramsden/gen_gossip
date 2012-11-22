@@ -39,7 +39,7 @@
 %%%===================================================================
 
 start_link(Number) ->
-    egossip_server:start_link(?MODULE, [Number],  aggregate).
+    egossip_server:register_handler(?MODULE, [Number],  aggregate).
 
 %%%===================================================================
 %%% egossip callbacks

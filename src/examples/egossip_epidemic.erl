@@ -32,7 +32,7 @@
 %%%===================================================================
 
 start_link() ->
-    egossip_server:start_link(?MODULE, [], epidemic).
+    egossip_server:register_handler(?MODULE, [], epidemic).
 
 %%%===================================================================
 %%% egossip callbacks
