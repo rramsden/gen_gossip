@@ -256,27 +256,26 @@ handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
                                     mstate=MState0, module=Module} = State0) ->
     send_after(Module:gossip_freq(), '$egossip_tick'),
 
-    {ok, State1} = case get_peer(visible) of
-        none_available ->
-            {ok, State0};
-        {ok, Node} ->
-            {reply, Digest, MState1} = Module:digest(MState0),
-            ?mockable( send_gossip(Node, handle_push, Digest, State0#state{mstate=MState1}) )
-    end,
-
-    % The MAX_WAIT counter is positive we're waiting to join a cluster.
-    % the reason we set this is because a node could end up waiting forever
-    % if the node it was waiting on crashed.
     case StateName == gossiping of
         true ->
+            {ok, State1} = case get_peer(visible) of
+                none_available ->
+                    {ok, State0};
+                {ok, Node} ->
+                    {reply, Digest, MState1} = Module:digest(MState0),
+                    ?mockable( send_gossip(Node, handle_push, Digest, State0#state{mstate=MState1}) )
+            end,
             {ok, State2} = next_cycle(State1),
             {next_state, gossiping, State2};
         false ->
-            case State1#state.max_wait == 0 of
+            case State0#state.max_wait == 0 of
                 true ->
-                    {next_state, gossiping, State1};
+                    {next_state, gossiping, State0};
                 false ->
-                    {next_state, waiting, State1#state{max_wait=(MaxWait-1)}}
+                    % The MAX_WAIT counter is positive we're waiting to join a cluster.
+                    % the reason we set this is because a node could end up waiting forever
+                    % if the node it was waiting on crashed.
+                    {next_state, waiting, State0#state{max_wait=(MaxWait-1)}}
             end
     end.
 

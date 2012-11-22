@@ -18,6 +18,7 @@ app_test_() ->
             fun remove_downed_node_/1,
             fun dont_increment_cycle_in_wait_state_/1,
             fun dont_increment_cycle_for_other_modes_/1,
+            fun dont_gossip_in_wait_state_/1,
             fun dont_wait_forever_/1
             ]}.
 
@@ -42,6 +43,14 @@ setup() ->
 cleanup(Module) ->
     meck:unload(egossip_server),
     meck:unload(Module).
+
+dont_gossip_in_wait_state_(Module) ->
+    fun() ->
+        State0 = #state{module=Module},
+
+        {next_state, gossiping, State1} = egossip_server:handle_info('$egossip_tick', waiting, State0),
+        ?assert( not meck:called(egossip_server, send_gossip, [from, handle_pull, digest, State1]) )
+    end.
 
 reconcile_nodes_(Module) ->
     fun() ->
