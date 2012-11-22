@@ -15,7 +15,7 @@
 
 %% egossip callbacks
 -export([init/1,
-         gossip_freq/0,
+         gossip_freq/1,
          digest/1,
          join/2,
          expire/2,
@@ -42,8 +42,8 @@ init([]) ->
     {ok, #state{}}.
 
 % how often do we want to send a message? in milliseconds.
-gossip_freq() ->
-    1000.
+gossip_freq(State) ->
+    {reply, 1000, State}.
 
 % defines what we're gossiping
 digest(#state{epoch=Epoch0} = State) ->

@@ -26,10 +26,10 @@
 %%  init(Args)
 %%    ==> {ok, State}
 %%
-%%  gossip_freq()
+%%  gossip_freq(State)
 %%    | Handles how frequently a gossip message is sent. Time is
 %%    | in milliseconds
-%%    ==> Integer
+%%    ==> {reply, Tick :: Integer, State}
 %%
 %%  digest(State)
 %%    | Message you want to be gossiped around cluster
@@ -62,7 +62,7 @@
 %%    | the number of nodes that were in on the current conversation
 %%    ==> {noreply, State}
 %%
-%%  cycles(NodeCount)
+%%  cycles(NodeCount, State)
 %%    | You don't need to implement this if your building using epidemic mode.
 %%    | This returns the number of cycles in each round needed for aggregation mode.
 %%    ==> Integer
@@ -111,8 +111,8 @@
 
 -callback init(Args :: [any()]) ->
     {ok, module_state()}.
--callback gossip_freq() ->
-    Tick :: pos_integer().
+-callback gossip_freq(module_state()) ->
+    {reply, Tick :: pos_integer(), module_state()}.
 -callback digest(State :: any()) ->
     {reply, Reply :: any(), module_state()}.
 -callback join(nodelist(), module_state()) ->
@@ -143,10 +143,15 @@ register_handler(Module, Args, Mode) ->
 %%%===================================================================
 
 init([Module, Args, Mode]) ->
-    send_after(Module:gossip_freq(), '$egossip_tick'),
     net_kernel:monitor_nodes(true),
-    {ok, State} = Module:init(Args),
-    {ok, gossiping, #state{module=Module, mode=Mode, mstate=State}}.
+    {ok, MState0} = Module:init(Args),
+
+    State0 = #state{module=Module, mode=Mode, mstate=MState0},
+    {reply, Tick, MState1} = Module:gossip_freq(MState0),
+
+    send_after(Tick, '$egossip_tick'),
+
+    {ok, gossiping, State0#state{mstate=MState1}}.
 
 %% @doc
 %% A node will transition into waiting state if there exists
@@ -207,7 +212,7 @@ gossiping({R_Epoch, {Token, Msg, From}, Nodelist},
 
 % 3.
 gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
-        #state{epoch=Epoch, module=Module, nodes=Nodelist} = State0)
+        #state{epoch=Epoch, module=Module, mstate=MState0, nodes=Nodelist} = State0)
         when R_Epoch > Epoch, R_Nodelist =/= Nodelist ->
     % The intersection is taken to prevent nodes from waiting twice
     % to enter into the next epoch. This happens when islands
@@ -224,8 +229,11 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
             % we do this because if the node we're waiting on crashes
             % we could end up waiting forever.
             ClusterSize = length(union(Nodelist, R_Nodelist)),
-            MaxWait = Module:cycles(ClusterSize) * 2,
-            {next_state, waiting, State0#state{max_wait = MaxWait, wait_for = (R_Epoch + 1)}};
+
+            {reply, Cycles, MState1} =  Module:cycles(ClusterSize, MState0),
+            {next_state, waiting, State0#state{max_wait = (Cycles * 2),
+                                               mstate=MState1,
+                                               wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
             {ok, State1} = set_round(R_Epoch, State0),
             {ok, State2} = reconcile_nodes(Nodelist, R_Nodelist, From, State1),
@@ -254,7 +262,8 @@ handle_info({nodeup, _}, StateName, State) ->
 
 handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
                                     mstate=MState0, module=Module} = State0) ->
-    send_after(Module:gossip_freq(), '$egossip_tick'),
+    {reply, Tick, MState1} = Module:gossip_freq(MState0),
+    send_after(Tick, '$egossip_tick'),
 
     case StateName == gossiping of
         true ->
@@ -262,20 +271,20 @@ handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
                 none_available ->
                     {ok, State0};
                 {ok, Node} ->
-                    {reply, Digest, MState1} = Module:digest(MState0),
-                    ?mockable( send_gossip(Node, handle_push, Digest, State0#state{mstate=MState1}) )
+                    {reply, Digest, MState2} = Module:digest(MState1),
+                    ?mockable( send_gossip(Node, handle_push, Digest, State0#state{mstate=MState2}) )
             end,
             {ok, State2} = next_cycle(State1),
             {next_state, gossiping, State2};
         false ->
             case State0#state.max_wait == 0 of
                 true ->
-                    {next_state, gossiping, State0};
+                    {next_state, gossiping, State0#state{mstate=MState1}};
                 false ->
                     % The MAX_WAIT counter is positive we're waiting to join a cluster.
                     % the reason we set this is because a node could end up waiting forever
                     % if the node it was waiting on crashed.
-                    {next_state, waiting, State0#state{max_wait=(MaxWait-1)}}
+                    {next_state, waiting, State0#state{mstate=MState1, max_wait=(MaxWait-1)}}
             end
     end.
 
@@ -310,15 +319,17 @@ next(_) -> undefined.
 
 next_cycle(#state{mode=Mode} = State) when Mode =/= aggregate ->
     {ok, State};
-next_cycle(#state{module=Module, cycle=Cycle, epoch=Epoch, nodes=Nodes} = State0) ->
+next_cycle(#state{module=Module, mstate=MState0, cycle=Cycle, epoch=Epoch, nodes=Nodes} = State0) ->
     NextCycle = Cycle + 1,
     NodeCount = length(Nodes),
 
-    case NextCycle > Module:cycles(NodeCount) of
+    {reply, Cycles, MState1} = Module:cycles(NodeCount, MState0),
+
+    case NextCycle > Cycles of
         true ->
-            set_round(Epoch + 1, State0);
+            set_round(Epoch + 1, State0#state{mstate=MState1});
         false ->
-            {ok, State0#state{cycle=NextCycle}}
+            {ok, State0#state{cycle=NextCycle, mstate=MState1}}
     end.
 
 set_round(N, #state{module=Module, mstate=MState0} = State) ->

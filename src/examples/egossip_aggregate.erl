@@ -20,9 +20,9 @@
 
 %% egossip callbacks
 -export([init/1,
-         gossip_freq/0,
+         gossip_freq/1,
          round_finish/2,
-         cycles/1,
+         cycles/2,
          digest/1,
          join/2,
          expire/2,
@@ -50,14 +50,15 @@ init([Number]) ->
 
 % Defines how frequently we want to send a gossip message.
 % In milliseconds.
-gossip_freq() ->
-    1000.
+gossip_freq(State) ->
+    {reply, 1000, State}.
 
 % The total number of cycles needed to reach convergence.
 % Best to experiment and figure out how many cycles it takes
 % your algorithm to reach convergence then assign that number
-cycles(NodeCount) ->
-    ceil(math:log(NodeCount * NodeCount)) + 1.
+cycles(NodeCount, State) ->
+    Length = ceil(math:log(NodeCount * NodeCount)) + 1,
+    {reply, Length, State}.
 
 % Callback signifiying end of a round
 round_finish(NodeCount, State) ->
