@@ -3,6 +3,7 @@
 
 -include("src/egossip.hrl").
 
+
 app_test_() ->
     {foreach,
      fun setup/0,
@@ -25,6 +26,7 @@ app_test_() ->
 setup() ->
     meck:new(egossip_server, [passthrough]),
     meck:expect(egossip_server, send_gossip, fun(_, _, _, State) -> {ok, State} end),
+    meck:expect(egossip_server, node_name, 0, a),
 
     Module = gossip_test,
     meck:new(Module),
@@ -44,6 +46,11 @@ cleanup(Module) ->
     meck:unload(egossip_server),
     meck:unload(Module).
 
+called(Mod, Fun) ->
+    History = meck:history(Mod),
+    List = [match || {_, {M, F, _, _}} <- History, M == Mod, F == Fun],
+    List =/= [].
+
 dont_gossip_in_wait_state_(Module) ->
     fun() ->
         State0 = #state{module=Module},
@@ -55,31 +62,67 @@ dont_gossip_in_wait_state_(Module) ->
 reconcile_nodes_(Module) ->
     fun() ->
         State = #state{module=Module, mstate=state},
-        % equally sized clusters must do a tiebreaker by comparing their
-        % node lists to see which island has to join another
-        {ok, #state{nodes=N1}} = egossip_server:reconcile_nodes([a,b], [c,d], d, State),
+
+        %%%
+        %% EQUAL SIZED ISLANDS
+
+        % node wins tiebreaker
+        meck:expect(egossip_server, node_name, 0, c),
+        {_, N1} = egossip_server:reconcile_nodes([c,d], [a,b], a, State),
         ?assertEqual(N1, [a,c,d]),
+        ?assert(not called( Module, join )),
+        meck:reset(egossip_server),
+
+        % node losses tiebreaker
+        meck:expect(egossip_server, node_name, 0, a),
+        {_, N2} = egossip_server:reconcile_nodes([a,b], [c,d], d, State),
+        ?assertEqual(N2, [a,c,d]),
         ?assert( meck:called(Module, join, [ [c,d], state ]) ),
-
-        % smaller sized islands must join a larger island
-        {ok, #state{nodes=N2}} = egossip_server:reconcile_nodes([a], [b,c,d], d, State),
-        ?assertEqual(N2, [a,b,c,d]),
-        ?assert( meck:called(Module, join, [ [b,c,d], state ]) ),
-
-        % since the remote node is joining our cluster we don't get a join notice.
-        % once we talk to him he will get a join notice on his side
-        {ok, #state{nodes=N3}} = egossip_server:reconcile_nodes([a,c,d], [b], b, State),
-        ?assertEqual(N3, [a,b,c,d]),
-        ?assert( not meck:called(Module, join, [ [b], state ]) ),
-
-        % node lists are the same, don't do anything
-        {ok, #state{nodes=N4}} = egossip_server:reconcile_nodes([a,b], [a,b], b, State),
-        ?assertEqual(N4, [a,b]),
+        meck:reset(egossip_server),
 
         % Two islands [a,b] and [c,d], a joins c #=> [a,c,d] and b joins d #=> [b,c,d]
         % an intersection now exists if these two islands talk with eachother.
-        % reconcile_nodes should just perform an union and not trigger a join event.
-        {ok, #state{nodes=[a,b,c,d]}} = egossip_server:reconcile_nodes([a,c,d], [b,c,d], c, State)
+        % reconcile_nodes should just perform a union and not trigger a join event.
+        {_, N3} = egossip_server:reconcile_nodes([a,c,d], [b,c,d], c, State),
+        ?assertEqual(N3, [a,b,c,d]),
+        ?assert(not called( Module, join )),
+        meck:reset(egossip_server),
+
+        %%%
+        %% SMALLER ISLAND MUST JOIN LARGER
+
+        % intersection is greater/equal to 2
+        {_, N4} = egossip_server:reconcile_nodes([a,b], [a,b,c], c, State),
+        ?assertEqual(N4, [a,b,c]),
+        ?assert(not called( Module, join )),
+        meck:reset(egossip_server),
+
+        % intersection is greater/equal, merges both lists
+        {_, N5} = egossip_server:reconcile_nodes([a,b,c], [b,c,d,e], c, State),
+        ?assertEqual(N5, [a,b,c,d,e]),
+        ?assert(not called( Module, join )),
+        meck:reset(egossip_server),
+
+        % intersection exists but less than two
+        {_, N6} = egossip_server:reconcile_nodes([a,b], [b,c,d], d, State),
+        ?assertEqual(N6, [a,b,c,d]),
+        ?assert( meck:called(Module, join, [ [b,c,d], state ]) ),
+        meck:reset(egossip_server),
+
+        % no nodes in common
+        {_, N7} = egossip_server:reconcile_nodes([a,e], [b,c,d], d, State),
+        ?assertEqual(N7, [a,b,c,d]),
+        ?assert( meck:called(Module, join, [ [b,c,d], state ]) ),
+        meck:reset(egossip_server),
+
+        %%%
+        %% LARGER ISLAND SUBSUMES SMALLER
+
+        % no join is triggered
+        {_, N8} = egossip_server:reconcile_nodes([a,c,d], [b], b, State),
+        ?assertEqual(N8, [a,b,c,d]),
+        ?assert( not called(Module, join) ),
+        meck:reset(egossip_server)
     end.
 
 prevent_forever_wait_(Module) ->

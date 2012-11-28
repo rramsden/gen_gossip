@@ -99,7 +99,7 @@
 -define(TRY(Code), (catch begin Code end)).
 
 -ifdef(TEST).
--export([reconcile_nodes/4, send_gossip/4]).
+-export([reconcile_nodes/4, send_gossip/4, node_name/0]).
 -define(mockable(Fun), ?MODULE:Fun).
 -else.
 -define(mockable(Fun), Fun).
@@ -236,17 +236,17 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
                                                wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
             {ok, State1} = set_round(R_Epoch, State0),
-            {ok, State2} = reconcile_nodes(Nodelist, R_Nodelist, From, State1),
-            {ok, State3} = do_gossip(Module, Token, Msg, From, State2),
-            {next_state, gossiping, State3}
+            {MState1, NewNodes} = reconcile_nodes(Nodelist, R_Nodelist, From, State1),
+            {ok, State2} = do_gossip(Module, Token, Msg, From, State1#state{mstate=MState1}),
+            {next_state, gossiping, State2#state{nodes=NewNodes}}
     end;
 % 4.
 gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
         #state{module=Module, nodes=Nodelist, epoch=Epoch} = State0)
         when R_Nodelist =/= Nodelist ->
-    {ok, State1} = reconcile_nodes(Nodelist, R_Nodelist, From, State0),
-    {ok, State2} = do_gossip(Module, Token, Msg, From, State1),
-    {next_state, gossiping, State2};
+    {MState1, NewNodes} = reconcile_nodes(Nodelist, R_Nodelist, From, State0),
+    {ok, State1} = do_gossip(Module, Token, Msg, From, State0#state{mstate=MState1}),
+    {next_state, gossiping, State1#state{nodes=NewNodes}};
 gossiping({_, _, _}, State) ->
     {next_state, gossiping, State}.
 
@@ -338,42 +338,40 @@ set_round(N, #state{module=Module, mstate=MState0} = State) ->
     {ok, State#state{epoch=N, cycle=0, mstate=MState1}}.
 
 %% @doc
-%% This handles cluster membership. We don't use the ErlangVM
-%% to determine whether a node is taking part in a conversation.
-%% The reason is because it would prevent aggregation-based protocols
-%% from converging. If nodes are continuously joining a conversation
-%% will never converge on an answer.
+%% Figures out how we join islands together. This is important because
+%% this bit of code figures out which nodes should trigger Module:join
+%% callbacks.
 %% @end
-reconcile_nodes(A, B, From, #state{mstate=MState0, module=Module} = State) ->
+reconcile_nodes(A, B, From, #state{mstate=MState0, module=Module}) ->
+    NodeName = ?mockable( node_name() ),
     Intersection = intersection(A, B),
+    TieBreaker = lists:sort(A) < lists:sort(B),
 
-    {Nodes, MState2} = if
-        A == B ->
-            {A, MState0};
-        length(A) > length(B) andalso Intersection == [] ->
-            {union(A, [From]), MState0};
-        length(A) < length(B) andalso Intersection == [] ->
+    if
+        length(Intersection) >= 2 ->
+            % if we have more than one node in common, a join was already
+            % triggered and we're in the process of forming an island.
+            {MState0, union(A, B)};
+        length(A) == length(B) ->
+            case TieBreaker of
+                true ->
+                    {noreply, MState1} = Module:join(B, MState0),
+                    {MState1, union([NodeName], B)};
+                false ->
+                    {MState0, union(A, [From])}
+            end;
+        length(A) > length(B) ->
+            % if my island is bigger than the remotes i consume it
+            {MState0, union(A, [From])};
+        length(A) < length(B) ->
+            % my island is smaller, I have to leave it and join the remotes
             {noreply, MState1} = Module:join(B, MState0),
-            {union(B, [node_name()]), MState1};
-        length(Intersection) == 1 andalso length(B) > length(A) ->
-            {noreply, MState1} = Module:join(B -- A, MState0),
-            {union(B, [node_name()]), MState1};
-        length(Intersection) > 0 ->
-            {union(A, B), MState0};
-        A < B ->
-            {noreply, MState1} = Module:join(B, MState0),
-            {union(B, [node_name()]), MState1};
-        true ->
-            {union(A, [From]), MState0}
-    end,
+            {MState1, union([NodeName], B)}
+    end.
 
-    {ok, State#state{mstate=MState2, nodes=Nodes}}.
-
--ifdef(TEST).
-node_name() -> a.
--else.
-node_name() -> node().
--endif.
+% mocked out when testing
+node_name() ->
+    node().
 
 get_peer(Opts) ->
     case nodes(Opts) of

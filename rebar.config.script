@@ -1,8 +1,8 @@
 %% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
 %% vim: set ts=4 sw=4 ft=erlang et:
 
-ExtraDeps = [{meck, "0.7.2",
-             {git, "https://github.com/eproxus/meck.git", {tag, "0.7.2"}}}],
+ExtraDeps = [{meck, ".*",
+             {git, "https://github.com/eproxus/meck.git", {tag, "cf476475b06"}}}],
 
 case os:getenv("EGOSSIP_TEST") of
     false ->
