@@ -125,6 +125,8 @@
     {reply, Reply :: any(), module_state()} | {noreply, module_state()}.
 -callback handle_commit(Msg :: any(), From :: node(), module_state()) ->
     {noreply, module_state()}.
+-callback handle_info(Msg :: any(), module_state()) ->
+    {noreply, module_state()}.
 
 %% @doc
 %% Starts egossip server with registered handler module
@@ -250,15 +252,11 @@ gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
 gossiping({_, _, _}, State) ->
     {next_state, gossiping, State}.
 
-handle_info({nodedown, Node}, StateName, #state{mstate=MState0, module=Module} = State) ->
+handle_info({nodedown, Node} = Msg, StateName, #state{mstate=MState0, module=Module} = State) ->
     NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodes),
     {noreply, MState1} = Module:expire(Node, MState0),
-    {next_state, StateName, State#state{nodes=NodesLeft, mstate=MState1}};
-
-handle_info({nodeup, _}, StateName, State) ->
-    % don't care about when a node is up, this is handled
-    % when nodes gossip with eachother
-    {next_state, StateName, State};
+    {noreply, MState2} = Module:handle_info(Msg, MState1),
+    {next_state, StateName, State#state{nodes=NodesLeft, mstate=MState2}};
 
 handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
                                     mstate=MState0, module=Module} = State0) ->
@@ -286,7 +284,11 @@ handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
                     % if the node it was waiting on crashed.
                     {next_state, waiting, State0#state{mstate=MState1, max_wait=(MaxWait-1)}}
             end
-    end.
+    end;
+
+handle_info(Msg, StateName, #state{module=Module, mstate=MState0} = State) ->
+    {noreply, MState1} = Module:handle_info(Msg, MState0),
+    {next_state, StateName, State#state{mstate=MState1}}.
 
 handle_event(_Msg, StateName, State) ->
     {next_state, StateName, State}.

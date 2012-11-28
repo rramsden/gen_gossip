@@ -28,7 +28,8 @@
          expire/2,
          handle_push/3,
          handle_pull/3,
-         handle_commit/3]).
+         handle_commit/3,
+         handle_info/2]).
 
 -record(state, {
     value = 0
@@ -85,6 +86,10 @@ handle_pull(Value, _From, State) ->
 
 % Doesn't get called in this example
 handle_commit(_, _, State) ->
+    {noreply, State}.
+
+% captures any out of band messages
+handle_info(_Msg, State) ->
     {noreply, State}.
 
 % Callback triggered when you join a cluster of nodes

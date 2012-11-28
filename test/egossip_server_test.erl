@@ -20,7 +20,8 @@ app_test_() ->
             fun dont_increment_cycle_in_wait_state_/1,
             fun dont_increment_cycle_for_other_modes_/1,
             fun dont_gossip_in_wait_state_/1,
-            fun dont_wait_forever_/1
+            fun dont_wait_forever_/1,
+            fun handles_out_of_band_messages_/1
             ]}.
 
 setup() ->
@@ -40,6 +41,7 @@ setup() ->
     meck:expect(Module, handle_commit, 3, {reply, digest, state}),
     meck:expect(Module, join, 2, {noreply, state}),
     meck:expect(Module, expire, 2, {noreply, state}),
+    meck:expect(Module, handle_info, 2, {noreply, state}),
     Module.
 
 cleanup(Module) ->
@@ -294,4 +296,12 @@ dont_wait_forever_(Module) ->
         {next_state, waiting, State1} = egossip_server:handle_info('$egossip_tick', waiting, State0),
         {next_state, waiting, State2} = egossip_server:handle_info('$egossip_tick', waiting, State1),
         {next_state, gossiping, _} = egossip_server:handle_info('$egossip_tick', waiting, State2)
+    end.
+
+handles_out_of_band_messages_(Module) ->
+    fun() ->
+        State0 = #state{module=Module, mstate=state},
+
+        {next_state, gossiping, _State} = egossip_server:handle_info(out_of_band, gossiping, State0),
+        ?assert( meck:called( Module, handle_info, [out_of_band, state] ) )
     end.

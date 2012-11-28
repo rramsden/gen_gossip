@@ -21,7 +21,8 @@
          expire/2,
          handle_pull/3,
          handle_push/3,
-         handle_commit/3]).
+         handle_commit/3,
+         handle_info/2]).
 
 -record(state, {
     epoch = 0
@@ -63,6 +64,10 @@ handle_pull(Epoch, _From, State) ->
 
 % received a commit
 handle_commit(_, _, State) ->
+    {noreply, State}.
+
+% handle any out of band messages
+handle_info(_Msg, State) ->
     {noreply, State}.
 
 % joined cluster
