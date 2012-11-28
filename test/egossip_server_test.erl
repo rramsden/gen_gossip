@@ -34,7 +34,7 @@ setup() ->
     meck:expect(Module, init, 1, {ok, state}),
     meck:expect(Module, gossip_freq, 1, {reply, 1000, state}),
     meck:expect(Module, round_finish, 2, {noreply, state}),
-    meck:expect(Module, cycles, 2, {reply, 10, state}),
+    meck:expect(Module, round_length, 2, {reply, 10, state}),
     meck:expect(Module, digest, 1, {reply, digest, state}),
     meck:expect(Module, handle_push, 3, {reply, digest, state}),
     meck:expect(Module, handle_pull, 3, {reply, digest, state}),

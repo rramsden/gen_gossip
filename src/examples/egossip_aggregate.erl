@@ -1,7 +1,7 @@
 %% @doc
 %% Implements a simple aggregation-based protocol. This will
 %% calculate the sum for an entire cluster of nodes.
-%% cycles/1 defines how long it takes to converge on the answer.
+%% round_length/2 defines how long it takes to converge on the answer.
 %% We calculate the sum of the cluster by taking the average of the value
 %% and multiplying it by the number of nodes in the conversation.
 %%
@@ -22,7 +22,7 @@
 -export([init/1,
          gossip_freq/1,
          round_finish/2,
-         cycles/2,
+         round_length/2,
          digest/1,
          join/2,
          expire/2,
@@ -57,7 +57,7 @@ gossip_freq(State) ->
 % The total number of cycles needed to reach convergence.
 % Best to experiment and figure out how many cycles it takes
 % your algorithm to reach convergence then assign that number
-cycles(NodeCount, State) ->
+round_length(NodeCount, State) ->
     Length = ceil(math:log(NodeCount * NodeCount)) + 1,
     {reply, Length, State}.
 

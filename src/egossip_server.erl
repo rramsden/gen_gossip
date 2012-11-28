@@ -62,9 +62,9 @@
 %%    | the number of nodes that were in on the current conversation
 %%    ==> {noreply, State}
 %%
-%%  cycles(NodeCount, State)
-%%    | You don't need to implement this if your building using epidemic mode.
-%%    | This returns the number of cycles in each round needed for aggregation mode.
+%%  round_length(NodeCount, State)
+%%    | This returns the number of cycles in each round needed
+%%    | to trigger round_finish.
 %%    ==> Integer
 %%
 %%
@@ -232,8 +232,8 @@ gossiping({R_Epoch, {Token, Msg, From}, R_Nodelist},
             % we could end up waiting forever.
             ClusterSize = length(union(Nodelist, R_Nodelist)),
 
-            {reply, Cycles, MState1} =  Module:cycles(ClusterSize, MState0),
-            {next_state, waiting, State0#state{max_wait = (Cycles * 2),
+            {reply, RoundLength, MState1} =  Module:round_length(ClusterSize, MState0),
+            {next_state, waiting, State0#state{max_wait = (RoundLength * 2),
                                                mstate=MState1,
                                                wait_for = (R_Epoch + 1)}};
         _NonEmpty ->
@@ -325,9 +325,9 @@ next_cycle(#state{module=Module, mstate=MState0, cycle=Cycle, epoch=Epoch, nodes
     NextCycle = Cycle + 1,
     NodeCount = length(Nodes),
 
-    {reply, Cycles, MState1} = Module:cycles(NodeCount, MState0),
+    {reply, RoundLength, MState1} = Module:round_length(NodeCount, MState0),
 
-    case NextCycle > Cycles of
+    case NextCycle > RoundLength of
         true ->
             set_round(Epoch + 1, State0#state{mstate=MState1});
         false ->
