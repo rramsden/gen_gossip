@@ -95,7 +95,7 @@
          terminate/3,
          code_change/4]).
 
--define(SERVER(Module), list_to_atom("egossip_" ++ atom_to_list(Module))).
+-define(SERVER(Module), Module).
 -define(TRY(Code), (catch begin Code end)).
 
 -ifdef(TEST).
