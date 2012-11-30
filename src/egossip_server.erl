@@ -55,6 +55,13 @@
 %%    | Called when we receive a commit from another node
 %%    ==> {noreply, State}
 %%
+%%  -- same as gen_server callbacks --
+%%  handle_info(Msg, State)
+%%  handle_call(Msg, From, State)
+%%  handle_cast(Msg, State)
+%%  terminate(Reason, State)
+%%  code_chnage(OldVsn, State, Extra)
+%%
 %%  AGGREGATION CALLBACKS
 %%
 %%  round_finish(NodeCount, State)
@@ -83,7 +90,7 @@
 -include("egossip.hrl").
 
 %% API
--export([register_handler/3]).
+-export([register_handler/3, call/2, cast/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -111,26 +118,46 @@
 
 -callback init(Args :: [any()]) ->
     {ok, module_state()}.
--callback gossip_freq(module_state()) ->
-    {reply, Tick :: pos_integer(), module_state()}.
--callback digest(State :: any()) ->
-    {reply, Reply :: any(), module_state()}.
--callback join(nodelist(), module_state()) ->
-    {noreply, module_state()}.
--callback expire(node(), module_state()) ->
-    {noreply, module_state()}.
--callback handle_push(Msg :: any(), From :: node(), module_state()) ->
-    {reply, Reply :: any(), module_state()} | {noreply, module_state()}.
--callback handle_pull(Msg :: any(), From :: node(), module_state()) ->
-    {reply, Reply :: any(), module_state()} | {noreply, module_state()}.
+-callback gossip_freq(State :: term()) ->
+    {reply, Tick :: pos_integer(), NewState :: term()}.
+-callback digest(State :: term()) ->
+    {reply, Reply :: term(), NewState :: term()}.
+-callback join(nodelist(), State :: term()) ->
+    {noreply, NewState :: term()}.
+-callback expire(node(), NewState :: term()) ->
+    {noreply, NewState :: term()}.
+-callback handle_push(Msg :: term(), From :: node(), State :: term()) ->
+    {reply, Reply :: term(), NewState :: term()} | {noreply, NewState :: term()}.
+-callback handle_pull(Msg :: term(), From :: node(), State :: term()) ->
+    {reply, Reply :: term(), NewState :: term()} | {noreply, NewState :: term()}.
 -callback handle_commit(Msg :: any(), From :: node(), module_state()) ->
-    {noreply, module_state()}.
--callback handle_info(Msg :: any(), module_state()) ->
-    {noreply, module_state()}.
+    {noreply, NewState :: term()}.
+-callback handle_info(Info :: timeout() | term(), State :: term()) ->
+    {noreply, NewState :: term()} |
+    {noreply, NewState :: term(), timeout() | hibernate} |
+    {stop, Reason :: term(), NewState :: term()}.
+-callback handle_call(Request :: term(), From :: {pid(), Tag :: term()},
+                      State :: term()) ->
+    {reply, Reply :: term(), NewState :: term()} |
+    {reply, Reply :: term(), NewState :: term(), timeout() | hibernate} |
+    {noreply, NewState :: term()} |
+    {noreply, NewState :: term(), timeout() | hibernate} |
+    {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
+    {stop, Reason :: term(), NewState :: term()}.
+-callback handle_cast(Request :: term(), State :: term()) ->
+    {noreply, NewState :: term()} |
+    {noreply, NewState :: term(), timeout() | hibernate} |
+    {stop, Reason :: term(), NewState :: term()}.
+-callback terminate(Reason, State) -> no_return() when
+    Reason :: normal | shutdown | {shutdown, term()} | term(),
+    State :: term().
+-callback code_change(OldVsn :: (term() | {down, term()}), State :: term(), Extra :: term()) ->
+    {ok, NewState :: term()} | {error, Reason :: term()}.
 
 %% @doc
 %% Starts egossip server with registered handler module
 %% @end
+-spec register_handler(module(), list(atom()), Mode :: atom()) -> {error, Reason :: atom()} | {ok, pid()}.
 
 register_handler(Module, Args, Mode) ->
     case lists:member(Mode, [aggregate, epidemic]) of
@@ -139,6 +166,22 @@ register_handler(Module, Args, Mode) ->
         false ->
             {error, invalid_mode}
     end.
+
+%% @doc
+%% Cals gen_fsm:sync_send_all_state_event/2
+%% @end
+-spec call(FsmRef :: pid(), Event :: term()) -> term().
+
+call(FsmRef, Event) ->
+    gen_fsm:sync_send_all_state_event(FsmRef, Event).
+
+%% @doc
+%% Calls gen_fsm:send_all_state_event/2
+%% @end
+-spec cast(FsmRef :: pid(), Event ::term()) -> term().
+
+cast(FsmRef, Request) ->
+    gen_fsm:send_all_state_event(FsmRef, Request).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -258,7 +301,7 @@ handle_info({nodedown, Node} = Msg, StateName, #state{mstate=MState0, module=Mod
     {noreply, MState2} = Module:handle_info(Msg, MState1),
     {next_state, StateName, State#state{nodes=NodesLeft, mstate=MState2}};
 
-handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
+    handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
                                     mstate=MState0, module=Module} = State0) ->
     {reply, Tick, MState1} = Module:gossip_freq(MState0),
     send_after(Tick, '$egossip_tick'),
@@ -287,25 +330,46 @@ handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
     end;
 
 handle_info(Msg, StateName, #state{module=Module, mstate=MState0} = State) ->
-    {noreply, MState1} = Module:handle_info(Msg, MState0),
-    {next_state, StateName, State#state{mstate=MState1}}.
+    Reply = Module:handle_info(Msg, MState0),
+    handle_reply(Reply, StateName, State).
 
-handle_event(_Msg, StateName, State) ->
-    {next_state, StateName, State}.
+handle_event(Event, StateName, #state{module=Module, mstate=MState0} = State) ->
+    Reply = Module:handle_cast(Event, MState0),
+    handle_reply(Reply, StateName, State).
 
-handle_sync_event(_Event, _From, StateName, State) ->
-    Reply = ok,
-    {reply, Reply, StateName, State}.
+handle_sync_event(Event, From, StateName, #state{module=Module, mstate=MState0} = State) ->
+    Reply = Module:handle_call(Event, From, MState0),
+    handle_reply(Reply, StateName, State).
 
-terminate(_Reason, _StateName, _State) ->
-    ok.
+terminate(Reason, _StateName, #state{module=Module, mstate=MState0}) ->
+    Module:terminate(Reason, MState0).
 
-code_change(_OldVsn, StateName, State, _Extra) ->
-    {ok, StateName, State}.
+code_change(OldVsn, _StateName, #state{module=Module, mstate=MState} = State, Extra) ->
+    case Module:code_change(OldVsn, MState, Extra) of
+        {ok, NewState} ->
+            {ok, State#state{mstate=NewState}};
+        Error -> Error
+    end.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+handle_reply(Msg, StateName, State) ->
+    case Msg of
+        {reply, Reply, MState0} ->
+            {reply, Reply, StateName, State#state{mstate=MState0}};
+        {reply, Reply, MState0, Extra} ->
+            {reply, Reply, StateName, State#state{mstate=MState0}, Extra};
+        {noreply, MState0} ->
+            {next_state, StateName, State#state{mstate=MState0}};
+        {noreply, MState0, Extra} ->
+            {next_state, StateName, State#state{mstate=MState0}, Extra};
+        {stop, Reason, Reply, MState0} ->
+            {stop, Reason, Reply, State#state{mstate=MState0}};
+        {stop, Reason, MState0} ->
+            {stop, Reason, State#state{mstate=MState0}}
+    end.
 
 do_gossip(Module, Token, Msg, From, #state{mstate=MState0} = State0) ->
     case Module:Token(Msg, From, MState0) of

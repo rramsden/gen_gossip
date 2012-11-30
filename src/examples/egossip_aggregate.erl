@@ -29,7 +29,11 @@
          handle_push/3,
          handle_pull/3,
          handle_commit/3,
-         handle_info/2]).
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
 
 -record(state, {
     value = 0
@@ -71,6 +75,15 @@ round_finish(NodeCount, State) ->
 digest(State) ->
     {reply, State#state.value, State}.
 
+% Callback triggered when you join a cluster of nodes
+join(Nodelist, State) ->
+    io:format("Joined cluster ~p~n", [Nodelist]),
+    {noreply, State}.
+
+% Callback triggered when a node crashes
+expire(_Node, State) ->
+    {noreply, State}.
+
 % Callback giving you another nodes digest
 handle_push(Value, _From, State) ->
     io:format("got push~n"),
@@ -88,18 +101,21 @@ handle_pull(Value, _From, State) ->
 handle_commit(_, _, State) ->
     {noreply, State}.
 
+handle_cast(_Request, State) ->
+    {noreply, State}.
+
+handle_call(_Request, _From, State) ->
+    {reply, not_implemented, State}.
+
 % captures any out of band messages
 handle_info(_Msg, State) ->
     {noreply, State}.
 
-% Callback triggered when you join a cluster of nodes
-join(Nodelist, State) ->
-    io:format("Joined cluster ~p~n", [Nodelist]),
-    {noreply, State}.
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 
-% Callback triggered when a node crashes
-expire(_Node, State) ->
-    {noreply, State}.
+terminate(_Reason, _State) ->
+    ok.
 
 %%%===================================================================
 %%% Internal Functions

@@ -19,10 +19,14 @@
          digest/1,
          join/2,
          expire/2,
-         handle_pull/3,
          handle_push/3,
+         handle_pull/3,
          handle_commit/3,
-         handle_info/2]).
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
 
 -record(state, {
     epoch = 0
@@ -66,9 +70,21 @@ handle_pull(Epoch, _From, State) ->
 handle_commit(_, _, State) ->
     {noreply, State}.
 
-% handle any out of band messages
+handle_cast(_Request, State) ->
+    {noreply, State}.
+
+handle_call(_Request, _From, State) ->
+    {reply, not_implemented, State}.
+
+% captures any out of band messages
 handle_info(_Msg, State) ->
     {noreply, State}.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+terminate(_Reason, _State) ->
+    ok.
 
 % joined cluster
 join(_Nodelist, State) ->

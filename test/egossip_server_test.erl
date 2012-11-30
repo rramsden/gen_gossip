@@ -21,7 +21,7 @@ app_test_() ->
             fun dont_increment_cycle_for_other_modes_/1,
             fun dont_gossip_in_wait_state_/1,
             fun dont_wait_forever_/1,
-            fun handles_out_of_band_messages_/1
+            fun proxies_out_of_band_messages_to_callback_module_/1
             ]}.
 
 setup() ->
@@ -39,9 +39,13 @@ setup() ->
     meck:expect(Module, handle_push, 3, {reply, digest, state}),
     meck:expect(Module, handle_pull, 3, {reply, digest, state}),
     meck:expect(Module, handle_commit, 3, {reply, digest, state}),
+    meck:expect(Module, handle_info, 2, {noreply, state}),
+    meck:expect(Module, handle_call, 3, {reply, ok, state}),
+    meck:expect(Module, handle_cast, 2, {noreply, state}),
+    meck:expect(Module, code_change, 3, {ok, state}),
+    meck:expect(Module, terminate, 2, ok),
     meck:expect(Module, join, 2, {noreply, state}),
     meck:expect(Module, expire, 2, {noreply, state}),
-    meck:expect(Module, handle_info, 2, {noreply, state}),
     Module.
 
 cleanup(Module) ->
@@ -297,11 +301,22 @@ dont_wait_forever_(Module) ->
         {next_state, waiting, State2} = egossip_server:handle_info('$egossip_tick', waiting, State1),
         {next_state, gossiping, _} = egossip_server:handle_info('$egossip_tick', waiting, State2)
     end.
-
-handles_out_of_band_messages_(Module) ->
+proxies_out_of_band_messages_to_callback_module_(Module) ->
     fun() ->
         State0 = #state{module=Module, mstate=state},
 
-        {next_state, gossiping, _State} = egossip_server:handle_info(out_of_band, gossiping, State0),
-        ?assert( meck:called( Module, handle_info, [out_of_band, state] ) )
+        {next_state, gossiping, _} = egossip_server:handle_info(out_of_band, gossiping, State0),
+        ?assert( meck:called( Module, handle_info, [out_of_band, state] ) ),
+
+        {next_state, gossiping, _} = egossip_server:handle_event(out_of_band, gossiping, State0),
+        ?assert( meck:called( Module, handle_cast, [out_of_band, state] ) ),
+
+        {reply, ok, gossiping, _} = egossip_server:handle_sync_event(out_of_band, from, gossiping, State0),
+        ?assert( meck:called( Module, handle_call, [out_of_band, from, state] ) ),
+
+        ok = egossip_server:terminate(shutdown, gossiping, State0),
+        ?assert( meck:called( Module, terminate, [shutdown, state] ) ),
+
+        {ok, State0} = egossip_server:code_change(1, gossiping, State0, []),
+        ?assert( meck:called( Module, code_change, [1, state, []]) )
     end.
