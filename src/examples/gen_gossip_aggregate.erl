@@ -7,18 +7,18 @@
 %%
 %% Usage:
 %%
-%%   (a@machine1)> egossip_aggregate:start_link(25).
-%%   (b@machine1)> egossip_aggregate:start_link(25).
+%%   (a@machine1)> gen_gossip_aggregate:start_link(25).
+%%   (b@machine1)> gen_gossip_aggregate:start_link(25).
 %%   (b@machine1)> net_adm:ping('a@machine1').
 %%
 %% @end
--module(egossip_aggregate).
--behaviour(egossip_server).
+-module(gen_gossip_aggregate).
+-behaviour(gen_gossip).
 
 %% API
 -export([start_link/1]).
 
-%% egossip callbacks
+%% gen_gossip callbacks
 -export([init/1,
          gossip_freq/1,
          round_finish/2,
@@ -44,10 +44,10 @@
 %%%===================================================================
 
 start_link(Number) ->
-    egossip_server:register_handler(?MODULE, [Number],  aggregate).
+    gen_gossip:register_handler(?MODULE, [Number],  aggregate).
 
 %%%===================================================================
-%%% egossip callbacks
+%%% gen_gossip callbacks
 %%%===================================================================
 
 init([Number]) ->

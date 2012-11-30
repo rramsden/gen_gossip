@@ -4,11 +4,12 @@
     wait_for :: integer(), % set to epoch we're waiting for
     max_wait = 0,
     cycle = 0,
-    module,
-    mstate,
-    mode = epidemic
+    module :: module(),
+    mstate :: term(),
+    mode :: mode()
 }).
 
+-type mode() :: epidemic | aggregate.
 -type from() :: node().
 -type token() :: atom().
 -type epoch() :: integer().

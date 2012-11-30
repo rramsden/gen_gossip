@@ -1,5 +1,5 @@
 %% @doc
-%% Behaviour module for egossip. egossip_server must be implemented by
+%% Behaviour module for gen_gossip. gen_gossip must be implemented by
 %% the user. There's two modes for gossiping: aggregate and epidemic.
 %%
 %% Aggregation Protocols
@@ -20,7 +20,7 @@
 %% Implementing a module
 %% ---------------------
 %%
-%% To use egossip_server you will need a user module
+%% To use gen_gossip you will need a user module
 %% to implement it. You must define the following callbacks:
 %%
 %%  init(Args)
@@ -56,6 +56,7 @@
 %%    ==> {noreply, State}
 %%
 %%  -- same as gen_server callbacks --
+%%
 %%  handle_info(Msg, State)
 %%  handle_call(Msg, From, State)
 %%  handle_cast(Msg, State)
@@ -84,10 +85,10 @@
 %%              send commit  ---------------->  Module:handle_commit/3
 %%
 %% @end
--module(egossip_server).
+-module(gen_gossip).
 -behaviour(gen_fsm).
 
--include("egossip.hrl").
+-include("gen_gossip.hrl").
 
 %% API
 -export([register_handler/3, call/2, cast/2]).
@@ -155,7 +156,7 @@
     {ok, NewState :: term()} | {error, Reason :: term()}.
 
 %% @doc
-%% Starts egossip server with registered handler module
+%% Starts gen_gossip server with registered handler module
 %% @end
 -spec register_handler(module(), list(atom()), Mode :: atom()) -> {error, Reason :: atom()} | {ok, pid()}.
 
@@ -194,7 +195,7 @@ init([Module, Args, Mode]) ->
     State0 = #state{module=Module, mode=Mode, mstate=MState0},
     {reply, Tick, MState1} = Module:gossip_freq(MState0),
 
-    send_after(Tick, '$egossip_tick'),
+    send_after(Tick, '$gen_gossip_tick'),
 
     {ok, gossiping, State0#state{mstate=MState1}}.
 
@@ -301,10 +302,10 @@ handle_info({nodedown, Node} = Msg, StateName, #state{mstate=MState0, module=Mod
     {noreply, MState2} = Module:handle_info(Msg, MState1),
     {next_state, StateName, State#state{nodes=NodesLeft, mstate=MState2}};
 
-    handle_info('$egossip_tick', StateName, #state{max_wait=MaxWait,
+    handle_info('$gen_gossip_tick', StateName, #state{max_wait=MaxWait,
                                     mstate=MState0, module=Module} = State0) ->
     {reply, Tick, MState1} = Module:gossip_freq(MState0),
-    send_after(Tick, '$egossip_tick'),
+    send_after(Tick, '$gen_gossip_tick'),
 
     case StateName == gossiping of
         true ->

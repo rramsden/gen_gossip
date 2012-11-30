@@ -3,17 +3,17 @@
 %%
 %% Usage:
 %%
-%%   (a@machine1)> egossip_epidemic:start_link().
-%%   (b@machine1)> egossip_epidemic:start_link().
+%%   (a@machine1)> gen_gossip_epidemic:start_link().
+%%   (b@machine1)> gen_gossip_epidemic:start_link().
 %%   (b@machine1)> net_adm:ping('a@machine1').
 %%
--module(egossip_epidemic).
--behaviour(egossip_server).
+-module(gen_gossip_epidemic).
+-behaviour(gen_gossip).
 
 %% api
 -export([start_link/0]).
 
-%% egossip callbacks
+%% gen_gossip callbacks
 -export([init/1,
          gossip_freq/1,
          digest/1,
@@ -37,10 +37,10 @@
 %%%===================================================================
 
 start_link() ->
-    egossip_server:register_handler(?MODULE, [], epidemic).
+    gen_gossip:register_handler(?MODULE, [], epidemic).
 
 %%%===================================================================
-%%% egossip callbacks
+%%% gen_gossip callbacks
 %%%===================================================================
 
 init([]) ->
