@@ -413,13 +413,17 @@ reconcile_nodes(A, B, From, #state{mstate=MState0, module=Module}) ->
     NodeName = ?mockable( node_name() ),
     Intersection = intersection(A, B),
     TieBreaker = lists:sort(A) < lists:sort(B),
+    LenA = length(A),
+    LenB = length(B),
 
     if
+        % if the intersection is one this means that the node in question has
+        % left our island to join another. If the intersection is greater than
+        % or equal to 2 this means we are in the process of forming a larger island
+        % so we can simply union the two islands together.
         length(Intersection) >= 2 ->
-            % if we have more than one node in common, a join was already
-            % triggered and we're in the process of forming an island.
             {MState0, union(A, B)};
-        length(A) == length(B) ->
+        LenA == LenB ->
             case TieBreaker of
                 true ->
                     {MState0, union(A, [From])};
@@ -427,10 +431,10 @@ reconcile_nodes(A, B, From, #state{mstate=MState0, module=Module}) ->
                     {noreply, MState1} = Module:join(B, MState0),
                     {MState1, union([NodeName], B)}
             end;
-        length(A) > length(B) ->
+        LenA > LenB ->
             % if my island is bigger than the remotes i consume it
             {MState0, union(A, [From])};
-        length(A) < length(B) ->
+        LenA < LenB ->
             % my island is smaller, I have to leave it and join the remotes
             {noreply, MState1} = Module:join(B, MState0),
             {MState1, union([NodeName], B)}
