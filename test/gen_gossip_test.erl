@@ -15,7 +15,6 @@ app_test_() ->
             fun transition_gossip_to_wait_state_/1,
             fun gossips_if_nodelist_and_epoch_match_/1,
             fun use_latest_epoch_if_nodelist_match_/1,
-            fun reconciles_nodelists_/1,
             fun remove_downed_node_/1,
             fun dont_increment_cycle_in_wait_state_/1,
             fun dont_increment_cycle_for_other_modes_/1,
@@ -73,37 +72,38 @@ reconcile_nodes_(Module) ->
         %% EQUAL SIZED ISLANDS
 
         % node wins tiebreaker
-        meck:expect(gen_gossip, node_name, 0, c),
-        {_, N1} = gen_gossip:reconcile_nodes([c,d], [a,b], a, State),
-        ?assertEqual(N1, [a,c,d]),
+        meck:expect(gen_gossip, node_name, 0, a),
+        {_, N1} = gen_gossip:reconcile_nodes([a,b], [c,d], c, State),
+        ?assertEqual([a,b,c], N1),
         ?assert(not called( Module, join )),
         meck:reset(gen_gossip),
 
         % node losses tiebreaker
-        meck:expect(gen_gossip, node_name, 0, a),
-        {_, N2} = gen_gossip:reconcile_nodes([a,b], [c,d], d, State),
-        ?assertEqual(N2, [a,c,d]),
-        ?assert( meck:called(Module, join, [ [c,d], state ]) ),
+        meck:expect(gen_gossip, node_name, 0, c),
+        {_, N2} = gen_gossip:reconcile_nodes([c,d], [a,b], a, State),
+        ?assertEqual([a,b,c], N2),
+        ?assert( meck:called(Module, join, [ [a,b], state ]) ),
         meck:reset(gen_gossip),
 
         % Two islands [a,b] and [c,d], a joins c #=> [a,c,d] and b joins d #=> [b,c,d]
         % an intersection now exists if these two islands talk with eachother.
         % reconcile_nodes should just perform a union and not trigger a join event.
+        meck:expect(gen_gossip, node_name, 0, a),
         {_, N3} = gen_gossip:reconcile_nodes([a,c,d], [b,c,d], c, State),
-        ?assertEqual(N3, [a,b,c,d]),
+        ?assertEqual([a,b,c,d], N3),
         ?assert(not called( Module, join )),
         meck:reset(gen_gossip),
 
         %%%
         %% SMALLER ISLAND MUST JOIN LARGER
 
-        % intersection is greater/equal to 2
-        {_, N4} = gen_gossip:reconcile_nodes([a,b], [a,b,c], c, State),
-        ?assertEqual(N4, [a,b,c]),
+        % intersection is greater/equal to 2, equal sized lists
+        {_, N4} = gen_gossip:reconcile_nodes([a,b,d], [a,b,c], c, State),
+        ?assertEqual(N4, [a,b,c,d]),
         ?assert(not called( Module, join )),
         meck:reset(gen_gossip),
 
-        % intersection is greater/equal, merges both lists
+        % intersection is greater/equal to 2, one side bigger than other
         {_, N5} = gen_gossip:reconcile_nodes([a,b,c], [b,c,d,e], c, State),
         ?assertEqual(N5, [a,b,c,d,e]),
         ?assert(not called( Module, join )),
@@ -212,36 +212,6 @@ use_latest_epoch_if_nodelist_match_(Module) ->
         % should also send a gossip message back
         ?assert( meck:called(gen_gossip, send_gossip, [from, handle_pull, digest, State1]) ),
         ?assertEqual(State1#state.epoch, R_Epoch)
-    end.
-
-reconciles_nodelists_(Module) ->
-    % two cases we will merge nodelists. First case is in
-    % #3 second case is in #4 if you look at the source for gen_gossip
-    fun() ->
-        % 3rd case
-        R_EpochA = 2,
-        R_NodelistA = [b,c],
-        EpochA = 1,
-        NodelistA = [a,c],
-
-        StateA0 = #state{module=Module, nodes=NodelistA, epoch=EpochA},
-        SendA = {R_EpochA, {handle_push, msg, from}, R_NodelistA},
-
-        {next_state, gossiping, StateA1} = gen_gossip:gossiping(SendA, StateA0),
-
-        ?assertEqual([a,b,c], StateA1#state.nodes),
-
-        % 4th case
-        R_EpochB = EpochB = 1,
-        R_NodelistB = [b,c],
-        NodelistB = [a],
-
-        StateB0 = #state{module=Module, nodes=NodelistB, epoch=EpochB},
-        SendB = {R_EpochB, {handle_push, msg, from}, R_NodelistB},
-
-        {next_state, gossiping, StateB1} = gen_gossip:gossiping(SendB, StateB0),
-
-        ?assertEqual([a,b,c], StateB1#state.nodes)
     end.
 
 remove_downed_node_(Module) ->

@@ -422,10 +422,10 @@ reconcile_nodes(A, B, From, #state{mstate=MState0, module=Module}) ->
         length(A) == length(B) ->
             case TieBreaker of
                 true ->
-                    {noreply, MState1} = Module:join(B, MState0),
-                    {MState1, union([NodeName], B)};
+                    {MState0, union(A, [From])};
                 false ->
-                    {MState0, union(A, [From])}
+                    {noreply, MState1} = Module:join(B, MState0),
+                    {MState1, union([NodeName], B)}
             end;
         length(A) > length(B) ->
             % if my island is bigger than the remotes i consume it
