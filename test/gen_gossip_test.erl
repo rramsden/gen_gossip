@@ -9,7 +9,12 @@ app_test_() ->
      fun setup/0,
      fun cleanup/1,
      [
-            fun reconcile_nodes_/1,
+            fun reconcile_equal_win_tiebreaker_/1,
+            fun reconcile_equal_lost_tiebreaker_/1,
+            fun reconcile_smaller_with_bigger_/1,
+            fun reconcile_larger_with_smaller_/1,
+            fun reconcile_intersection_with_1_/1,
+            fun reconcile_intersection_with_2_/1,
             fun prevent_forever_wait_/1,
             fun transition_wait_to_gossip_state_/1,
             fun transition_gossip_to_wait_state_/1,
@@ -64,70 +69,119 @@ dont_gossip_in_wait_state_(Module) ->
         ?assert( not meck:called(gen_gossip, send_gossip, [from, handle_pull, digest, State1]) )
     end.
 
-reconcile_nodes_(Module) ->
+reconcile_equal_win_tiebreaker_(Module) ->
     fun() ->
         State = #state{module=Module, mstate=state},
+        MyNode = a,
+        MyList = [a,b],
+        RemoteNode = c,
+        RemoteList = [c,d],
 
-        %%%
-        %% EQUAL SIZED ISLANDS
+        Expected = [a, b, c],
 
-        % node wins tiebreaker
-        meck:expect(gen_gossip, node_name, 0, a),
-        {_, N1} = gen_gossip:reconcile_nodes([a,b], [c,d], c, State),
-        ?assertEqual([a,b,c], N1),
+        meck:expect(gen_gossip, node_name, 0, MyNode),
+
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist),
         ?assert(not called( Module, join )),
-        meck:reset(gen_gossip),
 
-        % node losses tiebreaker
-        meck:expect(gen_gossip, node_name, 0, c),
-        {_, N2} = gen_gossip:reconcile_nodes([c,d], [a,b], a, State),
-        ?assertEqual([a,b,c], N2),
+        meck:reset(gen_gossip)
+    end.
+
+reconcile_equal_lost_tiebreaker_(Module) ->
+    fun() ->
+        State = #state{module=Module, mstate=state},
+        MyNode = c,
+        MyList = [c,d],
+        RemoteNode = c,
+        RemoteList = [a,b],
+
+        Expected = [a, b, c],
+
+        meck:expect(gen_gossip, node_name, 0, MyNode),
+
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist),
         ?assert( meck:called(Module, join, [ [a,b], state ]) ),
-        meck:reset(gen_gossip),
 
-        % Two islands [a,b] and [c,d], a joins c #=> [a,c,d] and b joins d #=> [b,c,d]
-        % an intersection now exists if these two islands talk with eachother.
-        % reconcile_nodes should just perform a union and not trigger a join event.
-        meck:expect(gen_gossip, node_name, 0, a),
-        {_, N3} = gen_gossip:reconcile_nodes([a,c,d], [b,c,d], c, State),
-        ?assertEqual([a,b,c,d], N3),
+        meck:reset(gen_gossip)
+    end.
+
+reconcile_smaller_with_bigger_(Module) ->
+    fun() ->
+        State = #state{module=Module, mstate=state},
+        MyNode = a,
+        MyList = [a,b,c],
+        RemoteNode = c,
+        RemoteList = [d,e,f,g],
+
+        Expected = [a,d,e,f,g],
+
+        meck:expect(gen_gossip, node_name, 0, MyNode),
+
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist),
+        ?assert( meck:called(Module, join, [ [d,e,f,g], state ]) ),
+
+        meck:reset(gen_gossip)
+    end.
+
+reconcile_larger_with_smaller_(Module) ->
+    fun() ->
+        State = #state{module=Module, mstate=state},
+        MyNode = a,
+        MyList = [a,b,c],
+        RemoteNode = d,
+        RemoteList = [d,e],
+
+        Expected = [a,b,c,d],
+
+        meck:expect(gen_gossip, node_name, 0, MyNode),
+
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist),
         ?assert(not called( Module, join )),
-        meck:reset(gen_gossip),
 
-        %%%
-        %% SMALLER ISLAND MUST JOIN LARGER
+        meck:reset(gen_gossip)
+    end.
 
-        % intersection is greater/equal to 2, equal sized lists
-        {_, N4} = gen_gossip:reconcile_nodes([a,b,d], [a,b,c], c, State),
-        ?assertEqual(N4, [a,b,c,d]),
-        ?assert(not called( Module, join )),
-        meck:reset(gen_gossip),
+reconcile_intersection_with_1_(Module) ->
+    fun() ->
+        % will still trigger a join because intersection has one item in it
+        State = #state{module=Module, mstate=state},
+        MyNode = b,
+        MyList = [a,b,c],
+        RemoteNode = d,
+        RemoteList = [a,d,e,f],
 
-        % intersection is greater/equal to 2, one side bigger than other
-        {_, N5} = gen_gossip:reconcile_nodes([a,b,c], [b,c,d,e], c, State),
-        ?assertEqual(N5, [a,b,c,d,e]),
-        ?assert(not called( Module, join )),
-        meck:reset(gen_gossip),
+        Expected = [a,b,d,e,f],
 
-        % intersection exists but less than two
-        {_, N6} = gen_gossip:reconcile_nodes([a,b], [b,c,d], d, State),
-        ?assertEqual(N6, [a,b,c,d]),
-        ?assert( meck:called(Module, join, [ [b,c,d], state ]) ),
-        meck:reset(gen_gossip),
+        meck:expect(gen_gossip, node_name, 0, MyNode),
 
-        % no nodes in common
-        {_, N7} = gen_gossip:reconcile_nodes([a,e], [b,c,d], d, State),
-        ?assertEqual(N7, [a,b,c,d]),
-        ?assert( meck:called(Module, join, [ [b,c,d], state ]) ),
-        meck:reset(gen_gossip),
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist),
+        ?assert( meck:called(Module, join, [ [a,d,e,f], state ]) ),
 
-        %%%
-        %% LARGER ISLAND SUBSUMES SMALLER
+        meck:reset(gen_gossip)
+    end.
 
-        % no join is triggered
-        {_, N8} = gen_gossip:reconcile_nodes([a,c,d], [b], b, State),
-        ?assertEqual(N8, [a,b,c,d]),
+reconcile_intersection_with_2_(Module) ->
+    fun() ->
+        % will still trigger a join because intersection has one item in it
+        State = #state{module=Module, mstate=state},
+        MyNode = b,
+        MyList = [a,b],
+        RemoteNode = d,
+        RemoteList = [a,b,c],
+
+        Expected = [a,b,c],
+
+        meck:expect(gen_gossip, node_name, 0, MyNode),
+
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist),
         ?assert( not called(Module, join) ),
+
         meck:reset(gen_gossip)
     end.
 
