@@ -26,14 +26,7 @@
          digest/1,
          join/2,
          expire/2,
-         handle_push/3,
-         handle_pull/3,
-         handle_commit/3,
-         handle_call/3,
-         handle_cast/2,
-         handle_info/2,
-         terminate/2,
-         code_change/3]).
+         handle_gossip/4]).
 
 -record(state, {
     value = 0
@@ -73,7 +66,7 @@ round_finish(NodeCount, State) ->
 
 % First message sent when talking to another node.
 digest(State) ->
-    {reply, State#state.value, State}.
+    {reply, State#state.value, _HandleToken = push, State}.
 
 % Callback triggered when you join a cluster of nodes
 join(Nodelist, State) ->
@@ -84,38 +77,15 @@ join(Nodelist, State) ->
 expire(_Node, State) ->
     {noreply, State}.
 
-% Callback giving you another nodes digest
-handle_push(Value, _From, State) ->
+handle_gossip(push, Value, _From, State) ->
     io:format("got push~n"),
     NewValue = (Value + State#state.value) / 2,
-    {reply, State#state.value, State#state{value=NewValue}}.
+    {reply, State#state.value, _HandleToken = pull, State#state{value=NewValue}};
 
-% Callback triggered on the node that initiated
-% the gossip
-handle_pull(Value, _From, State) ->
+handle_gossip(pull, Value, _From, State) ->
     io:format("got sym push~n"),
     NewValue = (Value + State#state.value) / 2,
     {noreply, State#state{value=NewValue}}.
-
-% Doesn't get called in this example
-handle_commit(_, _, State) ->
-    {noreply, State}.
-
-handle_cast(_Request, State) ->
-    {noreply, State}.
-
-handle_call(_Request, _From, State) ->
-    {reply, not_implemented, State}.
-
-% captures any out of band messages
-handle_info(_Msg, State) ->
-    {noreply, State}.
-
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
-
-terminate(_Reason, _State) ->
-    ok.
 
 %%%===================================================================
 %%% Internal Functions

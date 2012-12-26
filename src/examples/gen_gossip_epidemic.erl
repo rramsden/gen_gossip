@@ -19,14 +19,7 @@
          digest/1,
          join/2,
          expire/2,
-         handle_push/3,
-         handle_pull/3,
-         handle_commit/3,
-         handle_call/3,
-         handle_cast/2,
-         handle_info/2,
-         terminate/2,
-         code_change/3]).
+         handle_gossip/4]).
 
 -record(state, {
     epoch = 0
@@ -53,38 +46,20 @@ gossip_freq(State) ->
 % defines what we're gossiping
 digest(#state{epoch=Epoch0} = State) ->
     Epoch1 = Epoch0 + 1,
+    Value = State#state.epoch,
+    HandleToken = push,
     io:format("Epoch = ~p~n", [Epoch1]),
-    {reply, State#state.epoch, State#state{epoch=Epoch1}}.
+    {reply, Value, HandleToken, State#state{epoch=Epoch1}}.
 
 % received a push
-handle_push(Epoch, _From, State) when Epoch >= State#state.epoch ->
+handle_gossip(push, Epoch, _From, State) when Epoch >= State#state.epoch ->
     {noreply, State#state{epoch=Epoch}};
-handle_push(_Epoch, _From, State) ->
-    {reply, State#state.epoch, State}.
+handle_gossip(push, _Epoch, _From, State) ->
+    {reply, State#state.epoch, _HandleToken = pull, State};
 
 % received a symmetric push
-handle_pull(Epoch, _From, State) ->
+handle_gossip(pull, Epoch, _From, State) ->
     {noreply, State#state{epoch=Epoch}}.
-
-% received a commit
-handle_commit(_, _, State) ->
-    {noreply, State}.
-
-handle_cast(_Request, State) ->
-    {noreply, State}.
-
-handle_call(_Request, _From, State) ->
-    {reply, not_implemented, State}.
-
-% captures any out of band messages
-handle_info(_Msg, State) ->
-    {noreply, State}.
-
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
-
-terminate(_Reason, _State) ->
-    ok.
 
 % joined cluster
 join(_Nodelist, State) ->

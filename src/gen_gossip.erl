@@ -1,20 +1,20 @@
 %% @doc
 %% Behaviour module for gen_gossip. gen_gossip must be implemented by
-%% the user. There's two modes for gossiping: aggregate and epidemic.
+%% the user. There's two gossiping modes:
 %%
-%% Aggregation Protocols
+%% 1. Aggregation Protocols
+%% ------------------------
+%%
+%% If you want to converge on a value over a period of time then you want to implement
+%% an aggregation protocol.  These protocols will prevent nodes from joining a round in
+%% progress. They do this by keeping a version number of the current conversation.
+%% If two versions don't match then nodes will not gossip with eachother. Lower
+%% versioned nodes will wait for the next version to join in when the next round rolls over.
+%%
+%% 2. Epidemic Protocols
 %% ---------------------
 %%
-%% These protocols you want to converge at some point before reseting the round.
-%% They will prevent other nodes from joining a round in progress. They do
-%% this by keeping an ever increasing epoch counter which acts as a version number.
-%% If two versions don't match up then nodes will not gossip with eachother. Lower
-%% epoch nodes will wait to join higher epochs when the next round occurs.
-%%
-%% Epidemic Protocols
-%% ------------------
-%%
-%% These don't have any kind of versioning; all nodes will always be able to
+%% These don't have any kind of versioning. All nodes will always be able to
 %% gossip with eachother.
 %%
 %% Implementing a module
@@ -31,10 +31,6 @@
 %%    | in milliseconds
 %%    ==> {reply, Tick :: Integer, State}
 %%
-%%  digest(State)
-%%    | Message you want to be gossiped around cluster
-%%    ==> {reply, Term, State}
-%%
 %%  join(Nodelist, State)
 %%    | Notifies callback module when the CURRENT NODE joins another cluster
 %%    ==> {noreply, State}
@@ -43,27 +39,16 @@
 %%    | Notifies callback module when a node leaves the cluster
 %%    ==> {noreply, State}
 %%
-%%  handle_push(Msg, From, State)
-%%    | Called when we receive a push from another node
-%%    ==> {reply, Reply, State} | {noreply, State}
+%%  digest(State)
+%%    | Message you want to be gossiped around cluster
+%%    ==> {reply, Reply, HandleToken State}
 %%
-%%  handle_pull(Msg, From, State)
-%%    | Called when we receive a pull from another node
-%%    ==> {reply, From, State} | {noreply, State}
+%%  handle_gossip(Token, Msg, From, State)
+%%    | Called when we receive a gossip message from another node
+%%    ==> {reply, Reply, HandleToken, State} | {noreply, State}
 %%
-%%  handle_commit(Msg, From, State)
-%%    | Called when we receive a commit from another node
-%%    ==> {noreply, State}
-%%
-%%  -- same as gen_server callbacks --
-%%
-%%  handle_info(Msg, State)
-%%  handle_call(Msg, From, State)
-%%  handle_cast(Msg, State)
-%%  terminate(Reason, State)
-%%  code_chnage(OldVsn, State, Extra)
-%%
-%%  AGGREGATION CALLBACKS
+%%  You will need to implment the following if you're implementing an aggregation
+%%  protocol:
 %%
 %%  round_finish(NodeCount, State)
 %%    | User module is notified when a round finishes, passing
@@ -75,14 +60,21 @@
 %%    | to trigger round_finish.
 %%    ==> Integer
 %%
+%%  Optionally, you can also implement gen_server callbacks:
+%%
+%%  handle_info(Msg, State)
+%%  handle_call(Msg, From, State)
+%%  handle_cast(Msg, State)
+%%  terminate(Reason, State)
+%%  code_chnage(OldVsn, State, Extra)
 %%
 %%  Gossip Communication
 %%  --------------------
 %%
 %%                   NODE A                     NODE B
-%%                send push  ---------------->  Module:handle_push/3
-%%     Module:handle_pull/3  <----------------  send pull
-%%              send commit  ---------------->  Module:handle_commit/3
+%%                send digest -----------------> Module:handle_gossip/4
+%%     Module:handle_gossip/4 <----------------- send pull
+%%                send commit -----------------> Module:handle_commit/3
 %%
 %% @end
 -module(gen_gossip).
@@ -127,33 +119,8 @@
     {noreply, NewState :: term()}.
 -callback expire(node(), NewState :: term()) ->
     {noreply, NewState :: term()}.
--callback handle_push(Msg :: term(), From :: node(), State :: term()) ->
-    {reply, Reply :: term(), NewState :: term()} | {noreply, NewState :: term()}.
--callback handle_pull(Msg :: term(), From :: node(), State :: term()) ->
-    {reply, Reply :: term(), NewState :: term()} | {noreply, NewState :: term()}.
--callback handle_commit(Msg :: any(), From :: node(), module_state()) ->
-    {noreply, NewState :: term()}.
--callback handle_info(Info :: timeout() | term(), State :: term()) ->
-    {noreply, NewState :: term()} |
-    {noreply, NewState :: term(), timeout() | hibernate} |
-    {stop, Reason :: term(), NewState :: term()}.
--callback handle_call(Request :: term(), From :: {pid(), Tag :: term()},
-                      State :: term()) ->
-    {reply, Reply :: term(), NewState :: term()} |
-    {reply, Reply :: term(), NewState :: term(), timeout() | hibernate} |
-    {noreply, NewState :: term()} |
-    {noreply, NewState :: term(), timeout() | hibernate} |
-    {stop, Reason :: term(), Reply :: term(), NewState :: term()} |
-    {stop, Reason :: term(), NewState :: term()}.
--callback handle_cast(Request :: term(), State :: term()) ->
-    {noreply, NewState :: term()} |
-    {noreply, NewState :: term(), timeout() | hibernate} |
-    {stop, Reason :: term(), NewState :: term()}.
--callback terminate(Reason, State) -> no_return() when
-    Reason :: normal | shutdown | {shutdown, term()} | term(),
-    State :: term().
--callback code_change(OldVsn :: (term() | {down, term()}), State :: term(), Extra :: term()) ->
-    {ok, NewState :: term()} | {error, Reason :: term()}.
+-callback handle_gossip(HandleToken :: atom(), Msg :: term(), From :: node(), State :: term()) ->
+    {reply, Reply :: term(), HandleToken :: atom(), NewState :: term()} | {noreply, NewState :: term()}.
 
 %% @doc
 %% Starts gen_gossip server with registered handler module
@@ -306,8 +273,8 @@ handle_info('$gen_gossip_tick', StateName, #state{max_wait=MaxWait,
                 none_available ->
                     {ok, State0};
                 {ok, Node} ->
-                    {reply, Digest, MState2} = Module:digest(MState1),
-                    ?mockable( send_gossip(Node, handle_push, Digest, State0#state{mstate=MState2}) )
+                    {reply, Digest, HandleToken, MState2} = Module:digest(MState1),
+                    ?mockable( send_gossip(Node, HandleToken, Digest, State0#state{mstate=MState2}) )
             end,
             {ok, State2} = next_cycle(State1),
             {next_state, gossiping, State2};
@@ -324,25 +291,50 @@ handle_info('$gen_gossip_tick', StateName, #state{max_wait=MaxWait,
     end;
 
 handle_info(Msg, StateName, #state{module=Module, mstate=MState0} = State) ->
-    Reply = Module:handle_info(Msg, MState0),
-    handle_reply(Reply, StateName, State).
+    case erlang:function_exported(Module, handle_info, 2) of
+        true ->
+            Reply = Module:handle_info(Msg, MState0),
+            handle_reply(Reply, StateName, State);
+        false ->
+            {next_state, StateName, State}
+    end.
 
 handle_event(Event, StateName, #state{module=Module, mstate=MState0} = State) ->
-    Reply = Module:handle_cast(Event, MState0),
-    handle_reply(Reply, StateName, State).
+    case erlang:function_exported(Module, handle_cast, 2) of
+        true ->
+            Reply = Module:handle_cast(Event, MState0),
+            handle_reply(Reply, StateName, State);
+        false ->
+            {next_state, StateName, State}
+    end.
 
 handle_sync_event(Event, From, StateName, #state{module=Module, mstate=MState0} = State) ->
-    Reply = Module:handle_call(Event, From, MState0),
-    handle_reply(Reply, StateName, State).
+    case erlang:function_exported(Module, handle_call, 3) of
+        true ->
+            Reply = Module:handle_call(Event, From, MState0),
+            handle_reply(Reply, StateName, State);
+        false ->
+            {next_state, StateName, State}
+    end.
 
 terminate(Reason, _StateName, #state{module=Module, mstate=MState0}) ->
-    Module:terminate(Reason, MState0).
+    case erlang:function_exported(Module, terminate, 2) of
+        true ->
+            Module:terminate(Reason, MState0);
+        false ->
+            ok
+    end.
 
 code_change(OldVsn, _StateName, #state{module=Module, mstate=MState} = State, Extra) ->
-    case Module:code_change(OldVsn, MState, Extra) of
-        {ok, NewState} ->
-            {ok, State#state{mstate=NewState}};
-        Error -> Error
+    case erlang:function_exported(Module, code_change, 3) of
+        true ->
+            case Module:code_change(OldVsn, MState, Extra) of
+                {ok, NewState} ->
+                    {ok, State#state{mstate=NewState}};
+                Error -> Error
+            end;
+        false ->
+            {ok, State}
     end.
 
 %%%===================================================================
@@ -383,16 +375,12 @@ handle_reply(Msg, StateName, State) ->
     end.
 
 do_gossip(Module, Token, Msg, From, #state{mstate=MState0} = State0) ->
-    case Module:Token(Msg, From, MState0) of
-        {reply, Reply, MState1} ->
-            ?mockable( send_gossip(From, next(Token), Reply, State0#state{mstate=MState1}) );
+    case Module:handle_gossip(Token, Msg, From, MState0) of
+        {reply, Reply, HandleToken, MState1} ->
+            ?mockable( send_gossip(From, HandleToken, Reply, State0#state{mstate=MState1}) );
         {noreply, MState1} ->
             {ok, State0#state{mstate=MState1}}
     end.
-
-next(handle_push) -> handle_pull;
-next(handle_pull) -> handle_commit;
-next(_) -> undefined.
 
 next_cycle(#state{mode=Mode} = State) when Mode =/= aggregate ->
     {ok, State};

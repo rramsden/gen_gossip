@@ -39,10 +39,8 @@ setup() ->
     meck:expect(Module, gossip_freq, 1, {reply, 1000, state}),
     meck:expect(Module, round_finish, 2, {noreply, state}),
     meck:expect(Module, round_length, 2, {reply, 10, state}),
-    meck:expect(Module, digest, 1, {reply, digest, state}),
-    meck:expect(Module, handle_push, 3, {reply, digest, state}),
-    meck:expect(Module, handle_pull, 3, {reply, digest, state}),
-    meck:expect(Module, handle_commit, 3, {reply, digest, state}),
+    meck:expect(Module, digest, 1, {reply, digest, push, state}),
+    meck:expect(Module, handle_gossip, 4, {reply, digest, pull, state}),
     meck:expect(Module, handle_info, 2, {noreply, state}),
     meck:expect(Module, handle_call, 3, {reply, ok, state}),
     meck:expect(Module, handle_cast, 2, {noreply, state}),
@@ -66,7 +64,7 @@ dont_gossip_in_wait_state_(Module) ->
         State0 = #state{module=Module},
 
         {next_state, gossiping, State1} = gen_gossip:handle_info('$gen_gossip_tick', waiting, State0),
-        ?assert( not meck:called(gen_gossip, send_gossip, [from, handle_pull, digest, State1]) )
+        ?assert( not meck:called(gen_gossip, send_gossip, [from, pull, digest, State1]) )
     end.
 
 reconcile_equal_win_tiebreaker_(Module) ->
@@ -192,7 +190,7 @@ prevent_forever_wait_(Module) ->
         meck:expect(gen_gossip, nodelist, 0, [a,b]),
 
         State0 = #state{module=Module, wait_for=WaitFor, nodes=Nodelist},
-        Send = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
+        Send = {R_Epoch, {push, msg, from}, R_Nodelist},
 
         {next_state, waiting, State1} = gen_gossip:waiting(Send, State0),
 
@@ -211,7 +209,7 @@ transition_wait_to_gossip_state_(Module) ->
         meck:expect(gen_gossip, nodelist, 0, [a,b]),
 
         State0 = #state{module=Module, wait_for=Epoch, nodes=Nodelist},
-        Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
+        Msg = {R_Epoch, {push, msg, from}, R_Nodelist},
 
         {next_state, gossiping, _} = gen_gossip:waiting(Msg, State0)
     end.
@@ -226,7 +224,7 @@ transition_gossip_to_wait_state_(Module) ->
         meck:expect(gen_gossip, nodelist, 0, [a,b]),
 
         State0 = #state{module=Module, nodes=Nodelist, epoch=Epoch},
-        Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
+        Msg = {R_Epoch, {push, msg, from}, R_Nodelist},
 
         {next_state, waiting, _} = gen_gossip:gossiping(Msg, State0)
     end.
@@ -241,13 +239,13 @@ gossips_if_nodelist_and_epoch_match_(Module) ->
         meck:expect(gen_gossip, nodelist, 0, [a,b]),
 
         State0 = #state{mstate=state, module=Module, nodes=Nodelist, epoch=Epoch},
-        Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
+        Msg = {R_Epoch, {push, msg, from}, R_Nodelist},
 
         {next_state, gossiping, _} = gen_gossip:gossiping(Msg, State0),
 
-        % some data was pushed to the module, so it should reply with a handle_pull
-        ?assert( meck:called(Module, handle_push, [ msg, from, state ]) ),
-        ?assert( meck:called(gen_gossip, send_gossip, [from, handle_pull, digest, State0]) )
+        % some data was pushed to the module, so it should reply with a pull
+        ?assert( meck:called(Module, handle_gossip, [ push, msg, from, state ]) ),
+        ?assert( meck:called(gen_gossip, send_gossip, [from, pull, digest, State0]) )
     end.
 
 use_latest_epoch_if_nodelist_match_(Module) ->
@@ -263,12 +261,12 @@ use_latest_epoch_if_nodelist_match_(Module) ->
         meck:expect(gen_gossip, nodelist, 0, [a,b]),
 
         State0 = #state{module=Module, nodes=Nodelist, epoch=Epoch},
-        Send = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
+        Send = {R_Epoch, {push, msg, from}, R_Nodelist},
 
         {next_state, gossiping, State1} = gen_gossip:gossiping(Send, State0),
 
         % should also send a gossip message back
-        ?assert( meck:called(gen_gossip, send_gossip, [from, handle_pull, digest, State1]) ),
+        ?assert( meck:called(gen_gossip, send_gossip, [from, pull, digest, State1]) ),
         ?assertEqual(State1#state.epoch, R_Epoch)
     end.
 
