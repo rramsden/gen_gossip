@@ -107,7 +107,7 @@
 -define(TRY(Code), (catch begin Code end)).
 
 -ifdef(TEST).
--export([reconcile_nodes/4, send_gossip/4, node_name/0]).
+-export([reconcile_nodes/4, send_gossip/4, node_name/0, nodelist/0]).
 -define(mockable(Fun), ?MODULE:Fun).
 -else.
 -define(mockable(Fun), Fun).
@@ -189,7 +189,6 @@ cast(FsmRef, Request) ->
 %%%===================================================================
 
 init([Module, Args, Mode]) ->
-    net_kernel:monitor_nodes(true),
     {ok, MState0} = Module:init(Args),
 
     State0 = #state{module=Module, mode=Mode, mstate=MState0},
@@ -296,14 +295,8 @@ gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
 gossiping({_, _, _}, State) ->
     {next_state, gossiping, State}.
 
-handle_info({nodedown, Node} = Msg, StateName, #state{mstate=MState0, module=Module} = State) ->
-    NodesLeft = lists:filter(fun(N) -> N =/= Node end, State#state.nodes),
-    {noreply, MState1} = Module:expire(Node, MState0),
-    {noreply, MState2} = Module:handle_info(Msg, MState1),
-    {next_state, StateName, State#state{nodes=NodesLeft, mstate=MState2}};
-
-    handle_info('$gen_gossip_tick', StateName, #state{max_wait=MaxWait,
-                                    mstate=MState0, module=Module} = State0) ->
+handle_info('$gen_gossip_tick', StateName, #state{max_wait=MaxWait,
+                                mstate=MState0, module=Module} = State0) ->
     {reply, Tick, MState1} = Module:gossip_freq(MState0),
     send_after(Tick, '$gen_gossip_tick'),
 
@@ -355,6 +348,23 @@ code_change(OldVsn, _StateName, #state{module=Module, mstate=MState} = State, Ex
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+expire_downed_nodes(LocalGnodelist0, RemoteGnodelist0, Module, MState0) ->
+    Alive = ?mockable( nodelist() ),
+
+    % we don't want deleted nodes being re-added back into our local gnodeslist
+    RemoteGnodelist1 = intersection(RemoteGnodelist0, Alive),
+
+    DownedNodes = subtract(LocalGnodelist0, Alive),
+    LocalGnodelist1 = subtract(LocalGnodelist0, DownedNodes),
+
+    % expire nodes that have left the cluster
+    MState1 = lists:foldl(fun(Node, Acc) ->
+                {noreply, NewState} = Module:expire(Node, Acc),
+                NewState
+        end, MState0, DownedNodes),
+
+    {LocalGnodelist1, RemoteGnodelist1, MState1}.
 
 handle_reply(Msg, StateName, State) ->
     case Msg of
@@ -409,38 +419,42 @@ set_round(N, #state{module=Module, mstate=MState0} = State) ->
 %% this bit of code figures out which nodes should trigger Module:join
 %% callbacks.
 %% @end
-reconcile_nodes(A, B, From, #state{mstate=MState0, module=Module}) ->
+reconcile_nodes(LocalGnodes, RemoteGnodes, From, #state{mstate=MState0, module=Module}) ->
+    {A, B, MState1} = expire_downed_nodes(LocalGnodes, RemoteGnodes, Module, MState0),
+
     NodeName = ?mockable( node_name() ),
     Intersection = intersection(A, B),
-    TieBreaker = lists:sort(A) < lists:sort(B),
     LenA = length(A),
     LenB = length(B),
 
     if
         % if the intersection is one this means that the node in question has
-        % left our island to join another. If the intersection is greater than
+        % Left our island to join another. If the intersection is greater than
         % or equal to 2 this means we are in the process of forming a larger island
         % so we can simply union the two islands together.
         length(Intersection) >= 2 ->
-            {MState0, union(A, B)};
+            {MState1, union(A, B)};
         LenA == LenB ->
+            TieBreaker = lists:sort(A) < lists:sort(B),
             case TieBreaker of
                 true ->
-                    {MState0, union(A, [From])};
+                    {MState1, union(A, [From])};
                 false ->
-                    {noreply, MState1} = Module:join(B, MState0),
-                    {MState1, union([NodeName], B)}
+                    {noreply, MState2} = Module:join(B, MState1),
+                    {MState2, union([NodeName], B)}
             end;
         LenA > LenB ->
             % if my island is bigger than the remotes i consume it
-            {MState0, union(A, [From])};
+            {MState1, union(A, [From])};
         LenA < LenB ->
             % my island is smaller, I have to leave it and join the remotes
-            {noreply, MState1} = Module:join(B, MState0),
-            {MState1, union([NodeName], B)}
+            {noreply, MState2} = Module:join(B, MState1),
+            {MState2, union([NodeName], B)}
     end.
 
-% mocked out when testing
+nodelist() ->
+   [?mockable( node_name() ) | nodes()].
+
 node_name() ->
     node().
 
@@ -469,3 +483,6 @@ union(L1, L2) ->
 
 intersection(A, B) ->
     sets:to_list(sets:intersection(sets:from_list(A), sets:from_list(B))).
+
+subtract(A, B) ->
+    sets:to_list(sets:subtract(sets:from_list(A), sets:from_list(B))).

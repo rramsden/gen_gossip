@@ -79,13 +79,12 @@ reconcile_equal_win_tiebreaker_(Module) ->
 
         Expected = [a, b, c],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c,d]),
         meck:expect(gen_gossip, node_name, 0, MyNode),
 
         {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
         ?assertEqual(Expected, Nodelist),
-        ?assert(not called( Module, join )),
-
-        meck:reset(gen_gossip)
+        ?assert(not called( Module, join ))
     end.
 
 reconcile_equal_lost_tiebreaker_(Module) ->
@@ -98,13 +97,12 @@ reconcile_equal_lost_tiebreaker_(Module) ->
 
         Expected = [a, b, c],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c,d]),
         meck:expect(gen_gossip, node_name, 0, MyNode),
 
         {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
         ?assertEqual(Expected, Nodelist),
-        ?assert( meck:called(Module, join, [ [a,b], state ]) ),
-
-        meck:reset(gen_gossip)
+        ?assert( meck:called(Module, join, [ [a,b], state ]) )
     end.
 
 reconcile_smaller_with_bigger_(Module) ->
@@ -117,13 +115,12 @@ reconcile_smaller_with_bigger_(Module) ->
 
         Expected = [a,d,e,f,g],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c,d,e,f,g]),
         meck:expect(gen_gossip, node_name, 0, MyNode),
 
         {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
         ?assertEqual(Expected, Nodelist),
-        ?assert( meck:called(Module, join, [ [d,e,f,g], state ]) ),
-
-        meck:reset(gen_gossip)
+        ?assert( meck:called(Module, join, [ [d,e,f,g], state ]) )
     end.
 
 reconcile_larger_with_smaller_(Module) ->
@@ -136,13 +133,12 @@ reconcile_larger_with_smaller_(Module) ->
 
         Expected = [a,b,c,d],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c,d,e]),
         meck:expect(gen_gossip, node_name, 0, MyNode),
 
         {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
         ?assertEqual(Expected, Nodelist),
-        ?assert(not called( Module, join )),
-
-        meck:reset(gen_gossip)
+        ?assert(not called( Module, join ))
     end.
 
 reconcile_intersection_with_1_(Module) ->
@@ -156,13 +152,12 @@ reconcile_intersection_with_1_(Module) ->
 
         Expected = [a,b,d,e,f],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c,d,e,f]),
         meck:expect(gen_gossip, node_name, 0, MyNode),
 
         {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
         ?assertEqual(Expected, Nodelist),
-        ?assert( meck:called(Module, join, [ [a,d,e,f], state ]) ),
-
-        meck:reset(gen_gossip)
+        ?assert( meck:called(Module, join, [ [a,d,e,f], state ]) )
     end.
 
 reconcile_intersection_with_2_(Module) ->
@@ -176,13 +171,12 @@ reconcile_intersection_with_2_(Module) ->
 
         Expected = [a,b,c],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c,d]),
         meck:expect(gen_gossip, node_name, 0, MyNode),
 
         {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
         ?assertEqual(Expected, Nodelist),
-        ?assert( not called(Module, join) ),
-
-        meck:reset(gen_gossip)
+        ?assert( not called(Module, join) )
     end.
 
 prevent_forever_wait_(Module) ->
@@ -194,6 +188,8 @@ prevent_forever_wait_(Module) ->
         R_Nodelist = [b],
         WaitFor = 1,
         Nodelist = [a],
+
+        meck:expect(gen_gossip, nodelist, 0, [a,b]),
 
         State0 = #state{module=Module, wait_for=WaitFor, nodes=Nodelist},
         Send = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
@@ -212,6 +208,8 @@ transition_wait_to_gossip_state_(Module) ->
         Epoch = 1,
         Nodelist = [a],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b]),
+
         State0 = #state{module=Module, wait_for=Epoch, nodes=Nodelist},
         Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
@@ -225,6 +223,8 @@ transition_gossip_to_wait_state_(Module) ->
         Epoch = 1,
         Nodelist = [a],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b]),
+
         State0 = #state{module=Module, nodes=Nodelist, epoch=Epoch},
         Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
@@ -237,6 +237,8 @@ gossips_if_nodelist_and_epoch_match_(Module) ->
         R_Nodelist = [a,b],
         Epoch = 1,
         Nodelist = [a,b],
+
+        meck:expect(gen_gossip, nodelist, 0, [a,b]),
 
         State0 = #state{mstate=state, module=Module, nodes=Nodelist, epoch=Epoch},
         Msg = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
@@ -258,6 +260,8 @@ use_latest_epoch_if_nodelist_match_(Module) ->
         Epoch = 1,
         Nodelist = [a,b],
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b]),
+
         State0 = #state{module=Module, nodes=Nodelist, epoch=Epoch},
         Send = {R_Epoch, {handle_push, msg, from}, R_Nodelist},
 
@@ -270,13 +274,21 @@ use_latest_epoch_if_nodelist_match_(Module) ->
 
 remove_downed_node_(Module) ->
     fun() ->
-        Nodelist = [a,b,c],
-        Epoch = 1,
-        State0 = #state{module=Module, nodes=Nodelist, epoch=Epoch},
+        State = #state{module=Module, mstate=state},
+        MyNode = a,
+        MyList = [a,b],
+        RemoteNode = b,
+        RemoteList = [a,b],
 
-        {next_state, statename, State1} = gen_gossip:handle_info({nodedown, b}, statename, State0),
+        Expected = [a],
 
-        ?assertEqual([a,c], State1#state.nodes)
+        meck:expect(gen_gossip, nodelist, 0, [a]),
+        meck:expect(gen_gossip, node_name, 0, MyNode),
+
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist),
+        ?assert( not called(Module, join) ),
+        ?assert( meck:called( Module, expire, [RemoteNode, state] ) )
     end.
 
 dont_increment_cycle_in_wait_state_(Module) ->
@@ -285,6 +297,8 @@ dont_increment_cycle_in_wait_state_(Module) ->
         Epoch = 1,
 
         State0 = #state{mode=aggregate, cycle=0, max_wait=1, module=Module, nodes=Nodelist, epoch=Epoch},
+
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c]),
 
         {next_state, waiting, State1} = gen_gossip:handle_info('$gen_gossip_tick', waiting, State0),
 
@@ -304,6 +318,8 @@ dont_increment_cycle_for_other_modes_(Module) ->
 
         State0 = #state{mode=epidemic, cycle=0, max_wait=0, module=Module, nodes=Nodelist, epoch=Epoch},
 
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c]),
+
         {next_state, gossiping, State1} = gen_gossip:handle_info('$gen_gossip_tick', waiting, State0),
 
         % just making sure cycle is being incremented in gossip state
@@ -318,6 +334,8 @@ dont_wait_forever_(Module) ->
         MaxWait = 2,
         Nodelist = [a,b,c],
         Epoch = 1,
+
+        meck:expect(gen_gossip, nodelist, 0, [a,b,c]),
 
         State0 = #state{cycle=0, max_wait=MaxWait, module=Module, nodes=Nodelist, epoch=Epoch},
 
