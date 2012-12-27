@@ -15,6 +15,7 @@ app_test_() ->
             fun reconcile_larger_with_smaller_/1,
             fun reconcile_intersection_with_1_/1,
             fun reconcile_intersection_with_2_/1,
+            fun reconcile_removes_downed_nodes_/1,
             fun prevent_forever_wait_/1,
             fun transition_wait_to_gossip_state_/1,
             fun transition_gossip_to_wait_state_/1,
@@ -177,6 +178,26 @@ reconcile_intersection_with_2_(Module) ->
         ?assert( not called(Module, join) )
     end.
 
+reconcile_removes_downed_nodes_(Module) ->
+    % Using the erlang nodes() call we can see which nodes are alive in the cluster.
+    % Inside of reconcile_nodes/4 we strip out dead nodes from the remotes gnodelist
+    % to ensure that they won't be re-added back into our local gnodelist
+    fun() ->
+        State = #state{module=Module, mstate=state},
+        MyNode = b,
+        MyList = [a,b],
+        RemoteNode = d,
+        RemoteList = [c,d],
+
+        Expected = [a,b,d],
+
+        meck:expect(gen_gossip, nodelist, 0, [a,b,d]), % node 'c' is dead
+        meck:expect(gen_gossip, node_name, 0, MyNode),
+
+        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
+        ?assertEqual(Expected, Nodelist)
+    end.
+
 prevent_forever_wait_(Module) ->
     % by some freak chance if we were waiting for an epoch to roll around
     % that never occurred because a higher epoch appeared then we should
@@ -272,21 +293,16 @@ use_latest_epoch_if_nodelist_match_(Module) ->
 
 remove_downed_node_(Module) ->
     fun() ->
-        State = #state{module=Module, mstate=state},
-        MyNode = a,
-        MyList = [a,b],
-        RemoteNode = b,
-        RemoteList = [a,b],
+        Nodelist = [a,b,c],
+        Expected = [a,b], % node 'c' left cluster
 
-        Expected = [a],
+        meck:expect(gen_gossip, nodelist, 0, Expected),
 
-        meck:expect(gen_gossip, nodelist, 0, [a]),
-        meck:expect(gen_gossip, node_name, 0, MyNode),
+        State0 = #state{cycle=0, module=Module, nodes=Nodelist, epoch=0},
 
-        {_, Nodelist} = gen_gossip:reconcile_nodes(MyList, RemoteList, RemoteNode, State),
-        ?assertEqual(Expected, Nodelist),
-        ?assert( not called(Module, join) ),
-        ?assert( meck:called( Module, expire, [RemoteNode, state] ) )
+        {next_state, _, #state{nodes=Result}} = gen_gossip:handle_info('$gen_gossip_tick', waiting, State0),
+
+        ?assertEqual(Expected, Result)
     end.
 
 dont_increment_cycle_in_wait_state_(Module) ->
@@ -341,6 +357,7 @@ dont_wait_forever_(Module) ->
         {next_state, waiting, State2} = gen_gossip:handle_info('$gen_gossip_tick', waiting, State1),
         {next_state, gossiping, _} = gen_gossip:handle_info('$gen_gossip_tick', waiting, State2)
     end.
+
 proxies_out_of_band_messages_to_callback_module_(Module) ->
     fun() ->
         State0 = #state{module=Module, mstate=state},

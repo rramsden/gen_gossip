@@ -262,31 +262,28 @@ gossiping({Epoch, {Token, Msg, From},  R_Nodelist},
 gossiping({_, _, _}, State) ->
     {next_state, gossiping, State}.
 
-handle_info('$gen_gossip_tick', StateName, #state{max_wait=MaxWait,
+handle_info('$gen_gossip_tick', StateName, #state{nodes=Nodelist0, max_wait=MaxWait,
                                 mstate=MState0, module=Module} = State0) ->
+    % schedule another tick
     {reply, Tick, MState1} = Module:gossip_freq(MState0),
     send_after(Tick, '$gen_gossip_tick'),
 
+    {Nodelist1, MState2} = expire_downed_nodes(Nodelist0, Module, MState1),
+    State1 = State0#state{nodes=Nodelist1, mstate=MState2},
+
     case StateName == gossiping of
         true ->
-            {ok, State1} = case get_peer(visible) of
-                none_available ->
-                    {ok, State0};
-                {ok, Node} ->
-                    {reply, Digest, HandleToken, MState2} = Module:digest(MState1),
-                    ?mockable( send_gossip(Node, HandleToken, Digest, State0#state{mstate=MState2}) )
-            end,
-            {ok, State2} = next_cycle(State1),
-            {next_state, gossiping, State2};
+            {ok, State2} = gossip(State1),
+            {ok, State3} = next_cycle(State2),
+            {next_state, gossiping, State3};
         false ->
-            case State0#state.max_wait == 0 of
+            % prevent a node from waiting forever on a crashed node
+            ExceededMaxWait = (MaxWait == 0),
+            case ExceededMaxWait of
                 true ->
-                    {next_state, gossiping, State0#state{mstate=MState1}};
+                    {next_state, gossiping, State1};
                 false ->
-                    % The MAX_WAIT counter is positive we're waiting to join a cluster.
-                    % the reason we set this is because a node could end up waiting forever
-                    % if the node it was waiting on crashed.
-                    {next_state, waiting, State0#state{mstate=MState1, max_wait=(MaxWait-1)}}
+                    {next_state, waiting, State1#state{max_wait=(MaxWait-1)}}
             end
     end;
 
@@ -341,14 +338,19 @@ code_change(OldVsn, _StateName, #state{module=Module, mstate=MState} = State, Ex
 %%% Internal functions
 %%%===================================================================
 
-expire_downed_nodes(LocalGnodelist0, RemoteGnodelist0, Module, MState0) ->
+gossip(#state{mstate=MState0, module=Module} = State) ->
+    case get_peer(visible) of
+        none_available ->
+            {ok, State};
+        {ok, Node} ->
+            {reply, Digest, HandleToken, MState1} = Module:digest(MState0),
+            ?mockable( send_gossip(Node, HandleToken, Digest, State#state{mstate=MState1}) )
+    end.
+
+expire_downed_nodes(Nodelist0, Module, MState0) ->
     Alive = ?mockable( nodelist() ),
-
-    % we don't want deleted nodes being re-added back into our local gnodeslist
-    RemoteGnodelist1 = intersection(RemoteGnodelist0, Alive),
-
-    DownedNodes = subtract(LocalGnodelist0, Alive),
-    LocalGnodelist1 = subtract(LocalGnodelist0, DownedNodes),
+    DownedNodes = subtract(Nodelist0, Alive),
+    Nodelist1 = subtract(Nodelist0, DownedNodes),
 
     % expire nodes that have left the cluster
     MState1 = lists:foldl(fun(Node, Acc) ->
@@ -356,7 +358,7 @@ expire_downed_nodes(LocalGnodelist0, RemoteGnodelist0, Module, MState0) ->
                 NewState
         end, MState0, DownedNodes),
 
-    {LocalGnodelist1, RemoteGnodelist1, MState1}.
+    {Nodelist1, MState1}.
 
 handle_reply(Msg, StateName, State) ->
     case Msg of
@@ -407,13 +409,16 @@ set_round(N, #state{module=Module, mstate=MState0} = State) ->
 %% this bit of code figures out which nodes should trigger Module:join
 %% callbacks.
 %% @end
-reconcile_nodes(LocalGnodes, RemoteGnodes, From, #state{mstate=MState0, module=Module}) ->
-    {A, B, MState1} = expire_downed_nodes(LocalGnodes, RemoteGnodes, Module, MState0),
-
+reconcile_nodes(Local, Remote, From, #state{mstate=MState0, module=Module}) ->
     NodeName = ?mockable( node_name() ),
-    Intersection = intersection(A, B),
+    Alive = ?mockable( nodelist() ),
+
+    A = Local,
+    B = intersection(Alive, Remote), % prevent dead nodes from being re-added
+
     LenA = length(A),
     LenB = length(B),
+    Intersection = intersection(A, B),
 
     if
         % if the intersection is one this means that the node in question has
@@ -421,23 +426,23 @@ reconcile_nodes(LocalGnodes, RemoteGnodes, From, #state{mstate=MState0, module=M
         % or equal to 2 this means we are in the process of forming a larger island
         % so we can simply union the two islands together.
         length(Intersection) >= 2 ->
-            {MState1, union(A, B)};
+            {MState0, union(A, B)};
         LenA == LenB ->
             TieBreaker = lists:sort(A) < lists:sort(B),
             case TieBreaker of
                 true ->
-                    {MState1, union(A, [From])};
+                    {MState0, union(A, [From])};
                 false ->
-                    {noreply, MState2} = Module:join(B, MState1),
-                    {MState2, union([NodeName], B)}
+                    {noreply, MState1} = Module:join(B, MState0),
+                    {MState1, union([NodeName], B)}
             end;
         LenA > LenB ->
             % if my island is bigger than the remotes i consume it
-            {MState1, union(A, [From])};
+            {MState0, union(A, [From])};
         LenA < LenB ->
             % my island is smaller, I have to leave it and join the remotes
-            {noreply, MState2} = Module:join(B, MState1),
-            {MState2, union([NodeName], B)}
+            {noreply, MState1} = Module:join(B, MState0),
+            {MState1, union([NodeName], B)}
     end.
 
 nodelist() ->
